@@ -84,3 +84,15 @@
 //!
 //! [`resman`]: https://github.com/azriel91/resman
 //! [`shred`]: https://github.com/azriel91/shred
+
+pub use crate::{
+    edge::Edge, edge_id::EdgeId, fn_graph::FnGraph, fn_graph_builder::FnGraphBuilder, fn_id::FnId,
+    fn_id_inner::FnIdInner,
+};
+
+mod edge;
+mod edge_id;
+mod fn_graph;
+mod fn_graph_builder;
+mod fn_id;
+mod fn_id_inner;

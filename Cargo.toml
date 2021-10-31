@@ -9,3 +9,6 @@ documentation = "https://docs.rs/fn_graph/"
 readme = "README.md"
 keywords = ["async", "batch", "dispatch", "function"]
 license = "MIT OR Apache-2.0"
+
+[dependencies]
+daggy = { version = "0.8.0", default-features = false }
