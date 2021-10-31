@@ -1,14 +1,18 @@
 use std::mem::MaybeUninit;
 
-use daggy::WouldCycle;
+use daggy::{Dag, WouldCycle};
 
-use crate::{Edge, EdgeId, FnGraph, FnId};
+use crate::{Edge, EdgeId, FnGraph, FnId, FnIdInner};
+
+use self::rank_calc::RankCalc;
+
+mod rank_calc;
 
 /// Builder for a [`FnGraph`].
 #[derive(Debug)]
 pub struct FnGraphBuilder<F> {
     /// Directed acyclic graph of functions.
-    fn_graph: FnGraph<F>,
+    graph: Dag<F, Edge, FnIdInner>,
 }
 
 impl<F> FnGraphBuilder<F> {
@@ -23,8 +27,8 @@ impl<F> FnGraphBuilder<F> {
     /// functions through the [`add_edge`] method.
     ///
     /// [`add_edge`]: Self::add_edge
-    pub fn add_function(&mut self, function_spec: F) -> FnId {
-        self.fn_graph.add_node(function_spec)
+    pub fn add_fn(&mut self, f: F) -> FnId {
+        self.graph.add_node(f)
     }
 
     /// Adds multiple functions to the graph.
@@ -34,7 +38,7 @@ impl<F> FnGraphBuilder<F> {
     ///
     /// [`add_edge`]: Self::add_edge
     /// [`add_edges`]: Self::add_edges
-    pub fn add_functions<const N: usize>(&mut self, fn_graph: [F; N]) -> [FnId; N] {
+    pub fn add_fns<const N: usize>(&mut self, fns: [F; N]) -> [FnId; N] {
         // Create an uninitialized array of `MaybeUninit`. The `assume_init` is safe
         // because the type we are claiming to have initialized here is a bunch of
         // `MaybeUninit`s, which do not require initialization.
@@ -44,8 +48,8 @@ impl<F> FnGraphBuilder<F> {
         // Switch this to `MaybeUninit::uninit_array` once it is stable.
         let mut fn_ids: [MaybeUninit<FnId>; N] = unsafe { MaybeUninit::uninit().assume_init() };
 
-        IntoIterator::into_iter(fn_graph)
-            .map(|function_spec| self.add_function(function_spec))
+        IntoIterator::into_iter(fns)
+            .map(|f| self.add_fn(f))
             .zip(fn_ids.iter_mut())
             .for_each(|(function_rt_id, function_rt_id_mem)| {
                 function_rt_id_mem.write(function_rt_id);
@@ -87,7 +91,7 @@ impl<F> FnGraphBuilder<F> {
     ) -> Result<EdgeId, WouldCycle<Edge>> {
         // Use `update_edge` instead of `add_edge` to avoid duplicate edges from one
         // function to the other.
-        self.fn_graph
+        self.graph
             .update_edge(function_from, function_to, Edge::Logic)
     }
 
@@ -137,14 +141,89 @@ impl<F> FnGraphBuilder<F> {
 
     /// Builds and returns the [`FnGraph`].
     pub fn build(self) -> FnGraph<F> {
-        self.fn_graph
+        let Self { graph } = self;
+        let ranks = RankCalc::calc(&graph);
+
+        FnGraph { graph, ranks }
     }
 }
 
 impl<F> Default for FnGraphBuilder<F> {
     fn default() -> Self {
         Self {
-            fn_graph: FnGraph::default(),
+            graph: Dag::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use daggy::WouldCycle;
+    use resman::IntoFnRes;
+
+    use super::FnGraphBuilder;
+    use crate::{Edge, Rank};
+
+    #[test]
+    fn add_fn_with_differing_fns() {
+        let mut fn_graph_builder = FnGraphBuilder::new();
+        fn_graph_builder.add_fn((|| {}).into_fn_res());
+        fn_graph_builder.add_fn((|_: &usize| {}).into_fn_res());
+        fn_graph_builder.add_fn((|_: &mut usize, _: &mut u32| {}).into_fn_res());
+
+        let fn_graph = fn_graph_builder.build();
+
+        assert_eq!(&[Rank(0), Rank(0), Rank(0)], fn_graph.ranks.as_slice());
+    }
+
+    #[test]
+    fn add_fns() {
+        let mut fn_graph_builder = FnGraphBuilder::new();
+        fn_graph_builder.add_fns([
+            (|| {}).into_fn_res(),
+            (|_: &usize| {}).into_fn_res(),
+            (|_: &mut usize, _: &mut u32| {}).into_fn_res(),
+        ]);
+
+        let fn_graph = fn_graph_builder.build();
+
+        assert_eq!(&[Rank(0), Rank(0), Rank(0)], fn_graph.ranks.as_slice());
+    }
+
+    #[test]
+    fn add_edge() -> Result<(), WouldCycle<Edge>> {
+        let mut fn_graph_builder = FnGraphBuilder::new();
+        let fn_a = fn_graph_builder.add_fn((|| {}).into_fn_res());
+        let fn_b = fn_graph_builder.add_fn((|_: &usize| {}).into_fn_res());
+        let fn_c = fn_graph_builder.add_fn((|_: &mut usize, _: &mut u32| {}).into_fn_res());
+        let _fn_d = fn_graph_builder.add_fn((|_: &usize, _: &u32| {}).into_fn_res());
+        fn_graph_builder.add_edge(fn_a, fn_b)?;
+        fn_graph_builder.add_edge(fn_b, fn_c)?;
+
+        let fn_graph = fn_graph_builder.build();
+
+        assert_eq!(
+            &[Rank(0), Rank(1), Rank(2), Rank(0)],
+            fn_graph.ranks.as_slice()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn add_edges() -> Result<(), WouldCycle<Edge>> {
+        let mut fn_graph_builder = FnGraphBuilder::new();
+        let fn_a = fn_graph_builder.add_fn((|| {}).into_fn_res());
+        let fn_b = fn_graph_builder.add_fn((|_: &usize| {}).into_fn_res());
+        let fn_c = fn_graph_builder.add_fn((|_: &mut usize, _: &mut u32| {}).into_fn_res());
+        let _fn_d = fn_graph_builder.add_fn((|_: &usize, _: &u32| {}).into_fn_res());
+        fn_graph_builder.add_edges([(fn_a, fn_b), (fn_b, fn_c)])?;
+
+        let fn_graph = fn_graph_builder.build();
+
+        assert_eq!(
+            &[Rank(0), Rank(1), Rank(2), Rank(0)],
+            fn_graph.ranks.as_slice()
+        );
+        Ok(())
     }
 }

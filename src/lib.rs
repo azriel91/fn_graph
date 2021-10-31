@@ -87,7 +87,7 @@
 
 pub use crate::{
     edge::Edge, edge_id::EdgeId, fn_graph::FnGraph, fn_graph_builder::FnGraphBuilder, fn_id::FnId,
-    fn_id_inner::FnIdInner,
+    fn_id_inner::FnIdInner, rank::Rank,
 };
 
 mod edge;
@@ -96,3 +96,4 @@ mod fn_graph;
 mod fn_graph_builder;
 mod fn_id;
 mod fn_id_inner;
+mod rank;
