@@ -1,11 +1,13 @@
 use std::mem::MaybeUninit;
 
 use daggy::{Dag, WouldCycle};
+use resman::FnRes;
 
 use crate::{Edge, EdgeId, FnGraph, FnId, FnIdInner};
 
-use self::rank_calc::RankCalc;
+use self::{data_edge_augmenter::DataEdgeAugmenter, rank_calc::RankCalc};
 
+mod data_edge_augmenter;
 mod rank_calc;
 
 /// Builder for a [`FnGraph`].
@@ -15,7 +17,10 @@ pub struct FnGraphBuilder<F> {
     graph: Dag<F, Edge, FnIdInner>,
 }
 
-impl<F> FnGraphBuilder<F> {
+impl<F> FnGraphBuilder<F>
+where
+    F: FnRes,
+{
     /// Returns a new `FnGraphBuilder`.
     pub fn new() -> Self {
         Self::default()
@@ -141,8 +146,9 @@ impl<F> FnGraphBuilder<F> {
 
     /// Builds and returns the [`FnGraph`].
     pub fn build(self) -> FnGraph<F> {
-        let Self { graph } = self;
+        let Self { mut graph } = self;
         let ranks = RankCalc::calc(&graph);
+        DataEdgeAugmenter::augment(&mut graph, &ranks);
 
         FnGraph { graph, ranks }
     }
