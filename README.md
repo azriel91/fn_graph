@@ -1,4 +1,4 @@
-# 🗂️ fn_graph
+# 🧬 fn_graph
 
 [![Crates.io](https://img.shields.io/crates/v/fn_graph.svg)](https://crates.io/crates/fn_graph)
 [![docs.rs](https://img.shields.io/docsrs/fn_graph)](https://docs.rs/fn_graph)
