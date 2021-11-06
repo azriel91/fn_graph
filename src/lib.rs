@@ -56,11 +56,15 @@
 //!     executing that prevent functions in the next stage from beginning
 //!     execution.
 //!
-//! This crate builds upon [`resman`], which provides runtime managed data
-//! borrowing.
+//! ## See Also
 //!
+//! * [`fn_meta`]: Returns metadata about a function at runtime.
+//! * [`resman`]: Runtime managed resource borrowing.
+//! * [`shred`]: Shared resource dispatcher.
+//!
+//! [`fn_meta`]: https://github.com/azriel91/fn_meta
 //! [`resman`]: https://github.com/azriel91/resman
-//! [`shred`]: https://github.com/azriel91/shred
+//! [`shred`]: https://github.com/amethyst/shred
 //!
 //! [`FnRes`]: fn_res::FnFnRes
 //! [`FnMeta`]: fn_res::fn_meta::FnMeta

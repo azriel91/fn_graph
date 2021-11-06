@@ -63,9 +63,6 @@ The concept of a runtime managed data-dependency task graph is from
     executing that prevent functions in the next stage from beginning
     execution.
 
-This crate builds upon [`fn_graph`], which provides runtime managed data
-borrowing.
-
 ## See Also
 
 * [`fn_meta`]: Returns metadata about a function at runtime.
