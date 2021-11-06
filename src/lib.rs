@@ -1,8 +1,14 @@
-//! Batched function execution.
+//! Dynamically managed function graph.
 //!
-//! This crate provides the ability to execute multiple functions in batches,
-//! where the data required by each batch is guaranteed to not conflict
+//! This crate provides a `FnGraph`, where consumers can register a list of
+//! functions and their interdependencies. The graph can then return a stream of
+//! functions to iterate over either sequentially or concurrently. Any data
+//! dependencies required by the functions are guaranteed to not conflict
 //! according to borrowing rules.
+//!
+//! There is additional flexibility that the type of functions is not limited to
+//! closures and functions, but any type that implements the [`FnRes`] and
+//! [`FnMeta`] traits.
 //!
 //! # Rationale
 //!
@@ -25,65 +31,39 @@
 //! functions and data increases, so does its complexity, and it is desirable
 //! for this boilerplate to be managed by code.
 //!
-//! # Concepts
-//!
-//! ## Stages
-//!
-//! `fn_graph` provides the logic to stage functions such that there are no
-//! conflicting data accesses within a stage of functions. Any would-be
-//! conflicting data accesses are separated to an additional stage.
-//!
-//! The above scenario would contain two stages:
-//!
-//! | Stage | Functions  |
-//! | :---: | ---------- |
-//! |  `0`  | `f1`, `f2` |
-//! |  `1`  | `f3`       |
-//!
-//! ## Dependencies
-//!
-//! Even if functions may not have conflicting data access, there may be logical
-//! reasons to execute some functions before others.
-//!
-//! Assume in the set of functions, `f2` should logically occur after `f3`.
-//!
-//! | Function | Data                 |
-//! | -------- | -------------------- |
-//! | `f1`     | `&a,     &b`         |
-//! | `f2`     | `&a,     &b, &mut c` |
-//! | `f3`     | `&mut a, &b, &mut c` |
-//!
-//! The stages of functions that can execute are then:
-//!
-//! | Stage | Functions |
-//! | :---: | --------- |
-//! |  `0`  | `f1`      |
-//! |  `1`  | `f3`      |
-//! |  `2`  | `f2`      |
-//!
 //! # Notes
 //!
-//! The original implementation is from [`shred`]; `fn_graph` is an evolution of
-//! `shred` with the following changes:
+//! The concept of a runtime managed data-dependency task graph is from
+//! [`shred`]; `fn_graph`'s implementation has the following differences:
 //!
-//! * Updated API with ergonomic and flexibility trade-offs.
+//! * Different API ergonomics and flexibility trade-offs.
 //!
 //!     - Takes functions and closures as input instead of `System` impls.
 //!
 //!     - Parameters are detected from function signature instead of
-//!       `SystemData` implementation, but with a limit of 7 parameters.
+//!       `SystemData` implementation, but with a limit of 8 parameters.
 //!       *(manual `SystemData` implementation has arbitrary limit)*
 //!
 //!     - Return type is type parameterized instead of `()`.
 //!
-//! * Uses `async`, so does not group functions for concurrent / parallel
-//!   execution.
+//! * Instead of grouping functions by stages to manage data access conflicts,
+//!   `fn_graph` keeps a dependency graph of logic and data dependencies, and
+//!   executes functions when the preceeding functions are complete.
+//!
+//!     This allows for slightly less waiting time for subsequent functions with
+//!     data dependencies, as each may begin once its predecessors finish,
+//!     whereas a staged approach may contain other functions that are still
+//!     executing that prevent functions in the next stage from beginning
+//!     execution.
 //!
 //! This crate builds upon [`resman`], which provides runtime managed data
 //! borrowing.
 //!
 //! [`resman`]: https://github.com/azriel91/resman
 //! [`shred`]: https://github.com/azriel91/shred
+//!
+//! [`FnRes`]: fn_res::FnFnRes
+//! [`FnMeta`]: fn_res::fn_meta::FnMeta
 
 pub use crate::{
     edge::Edge, edge_id::EdgeId, fn_graph::FnGraph, fn_graph_builder::FnGraphBuilder, fn_id::FnId,
