@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use daggy::{Dag, WouldCycle};
+use daggy::{petgraph::algo::toposort, Dag, WouldCycle};
 use resman::FnRes;
 
 use crate::{Edge, EdgeId, FnGraph, FnId, FnIdInner};
@@ -149,8 +149,13 @@ where
         let Self { mut graph } = self;
         let ranks = RankCalc::calc(&graph);
         DataEdgeAugmenter::augment(&mut graph, &ranks);
+        let toposort = toposort(&graph, None).expect("Graph should not contain any cycles");
 
-        FnGraph { graph, ranks }
+        FnGraph {
+            graph,
+            ranks,
+            toposort,
+        }
     }
 }
 
