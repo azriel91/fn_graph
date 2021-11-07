@@ -74,6 +74,12 @@ pub use crate::{
     fn_id_inner::FnIdInner, rank::Rank,
 };
 
+pub use daggy::{self, WouldCycle};
+pub use resman::{
+    fn_meta::{self, FnMeta, FnMetaExt},
+    FnRes, IntoFnRes, Resource, Resources,
+};
+
 mod edge;
 mod edge_id;
 mod fn_graph;
