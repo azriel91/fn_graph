@@ -1,4 +1,5 @@
-use fn_graph::{Edge, FnGraphBuilder, IntoFnRes, Resources, WouldCycle};
+use fn_graph::{Edge, FnGraphBuilder, WouldCycle};
+use resman::{IntoFnRes, Resources};
 
 fn main() -> Result<(), WouldCycle<Edge>> {
     let mut resources = Resources::new();

@@ -1,8 +1,26 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    pin::Pin,
+};
 
 use daggy::{petgraph::graph::NodeReferences, Dag, NodeWeightsMut};
 
 use crate::{Edge, FnId, FnIdInner, Rank};
+
+#[cfg(feature = "async")]
+use daggy::Walker;
+#[cfg(feature = "async")]
+use futures::task::Poll;
+#[cfg(feature = "async")]
+use futures::{
+    stream::{self, Stream, StreamExt},
+    Future,
+};
+#[cfg(feature = "async")]
+use tokio::sync::mpsc;
+
+#[cfg(feature = "async")]
+use crate::FnRef;
 
 /// Directed acyclic graph of functions.
 ///
@@ -18,6 +36,8 @@ pub struct FnGraph<F> {
     /// The `FnId` is guaranteed to match the index in the `Vec` as we never
     /// remove from the graph. So we don't need to use a `HashMap` here.
     pub(crate) ranks: Vec<Rank>,
+    /// Number of predecessors of each function.
+    pub(crate) predecessor_counts: Vec<usize>,
     /// List of function IDs in topological order.
     ///
     /// Topological order is where each function is ordered before its
@@ -56,6 +76,168 @@ impl<F> FnGraph<F> {
             .iter()
             .copied()
             .map(|fn_id| &self.graph[fn_id])
+    }
+
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(feature = "async")]
+    pub fn stream(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
+        // Decrement `predecessor_counts[child_fn_id]` every time a function ref
+        // is dropped, and if `predecessor_counts[child_fn_id]` is 0, the stream
+        // can produce `child_fn`s.
+        let mut predecessor_counts = self.predecessor_counts.clone();
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(self.graph.node_count());
+        let (fn_done_tx, mut fn_done_rx) = mpsc::channel::<FnId>(self.graph.node_count());
+
+        // Preload the channel with all of the functions that have no predecessors
+        self.toposort
+            .iter()
+            .copied()
+            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+            .expect("Failed to preload function with no predecessors.");
+
+        let mut fns_remaining = self.graph.node_count();
+        let mut fn_ready_tx = Some(fn_ready_tx);
+        let mut fn_done_tx = Some(fn_done_tx);
+        stream::poll_fn(move |context| {
+            match fn_done_rx.poll_recv(context) {
+                Poll::Pending => {}
+                Poll::Ready(None) => {}
+                Poll::Ready(Some(fn_id)) => self.graph.children(fn_id).iter(&self.graph).for_each(
+                    |(_edge_id, child_fn_id)| {
+                        predecessor_counts[child_fn_id.index()] -= 1;
+                        if predecessor_counts[child_fn_id.index()] == 0 {
+                            if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
+                                fn_ready_tx.try_send(child_fn_id).unwrap_or_else(|e| {
+                                    panic!(
+                                        "Failed to queue function `{}`. Cause: {}",
+                                        fn_id.index(),
+                                        e
+                                    )
+                                });
+                            }
+                        }
+                    },
+                ),
+            }
+
+            let poll = if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                fn_ready_rx.poll_recv(context).map(|fn_id| {
+                    fn_id.map(|fn_id| {
+                        let r#fn = &self.graph[fn_id];
+                        FnRef {
+                            fn_id,
+                            r#fn,
+                            fn_done_tx: fn_done_tx.clone(),
+                        }
+                    })
+                })
+            } else {
+                // Should never happen.
+                Poll::Ready(None)
+            };
+
+            // We have to track how many functions have been processed and end the stream.
+            if let Poll::Ready(Some(..)) = &poll {
+                fns_remaining -= 1;
+
+                if fns_remaining == 0 {
+                    fn_done_tx.take();
+                    fn_ready_tx.take();
+                }
+            }
+
+            poll
+        })
+    }
+
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(feature = "async")]
+    pub async fn fold_async<'f, Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    where
+        FnFold: FnMut(Seed, &mut F) -> Pin<Box<dyn Future<Output = Seed> + '_>>,
+    {
+        let predecessor_counts = self.predecessor_counts.clone();
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(self.graph.node_count());
+
+        // Preload the channel with all of the functions that have no predecessors
+        self.toposort
+            .iter()
+            .copied()
+            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+            .expect("Failed to preload function with no predecessors.");
+
+        let graph = &mut self.graph;
+        let fn_ready_tx = Some(fn_ready_tx);
+        let fns_remaining = graph.node_count();
+        let (_graph, _predecessor_counts, _fn_ready_tx, _fns_remaining, seed, _fn_fold) =
+            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .fold(
+                    (
+                        graph,
+                        predecessor_counts,
+                        fn_ready_tx,
+                        fns_remaining,
+                        seed,
+                        fn_fold,
+                    ),
+                    |(
+                        graph,
+                        mut predecessor_counts,
+                        mut fn_ready_tx,
+                        mut fns_remaining,
+                        seed,
+                        mut fn_fold,
+                    ),
+                     fn_id| {
+                        async move {
+                            let r#fn = &mut graph[fn_id];
+                            let seed = fn_fold(seed, r#fn).await;
+
+                            graph.children(fn_id).iter(&graph).for_each(
+                                |(_edge_id, child_fn_id)| {
+                                    predecessor_counts[child_fn_id.index()] -= 1;
+                                    if predecessor_counts[child_fn_id.index()] == 0 {
+                                        if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
+                                            fn_ready_tx.try_send(child_fn_id).unwrap_or_else(|e| {
+                                                panic!(
+                                                    "Failed to queue function `{}`. Cause: {}",
+                                                    fn_id.index(),
+                                                    e
+                                                )
+                                            });
+                                        }
+                                    }
+                                },
+                            );
+
+                            // Close `fn_ready_rx` when all functions have been executed,
+                            fns_remaining -= 1;
+                            if fns_remaining == 0 {
+                                fn_ready_tx.take();
+                            }
+
+                            (
+                                graph,
+                                predecessor_counts,
+                                fn_ready_tx,
+                                fns_remaining,
+                                seed,
+                                fn_fold,
+                            )
+                        }
+                    },
+                )
+                .await;
+
+        seed
     }
 
     /// Returns an iterator that runs the provided logic over the functions.
@@ -149,6 +331,7 @@ impl<F> Default for FnGraph<F> {
         Self {
             graph: Dag::new(),
             ranks: Vec::new(),
+            predecessor_counts: Vec::new(),
             toposort: Vec::new(),
         }
     }
@@ -355,6 +538,236 @@ mod tests {
         assert_eq!(Some((FnId::new(0), 1)), fn_iter.next().map(call_fn));
         assert_eq!(Some((FnId::new(1), 2)), fn_iter.next().map(call_fn));
         assert_eq!(None, fn_iter.next().map(call_fn));
+    }
+
+    #[cfg(feature = "async")]
+    mod async_tests {
+        use daggy::WouldCycle;
+        use futures::{stream, StreamExt};
+        use resman::{FnRes, FnResMut, IntoFnRes, IntoFnResMut, Resources};
+        use tokio::{
+            runtime,
+            sync::mpsc::{self, Receiver},
+        };
+
+        use super::super::FnGraph;
+        use crate::{Edge, FnGraphBuilder};
+
+        #[test]
+        fn stream_returns_fns_in_dep_order_concurrently() -> Result<(), Box<dyn std::error::Error>>
+        {
+            let rt = runtime::Builder::new_current_thread().build()?;
+            rt.block_on(async {
+                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                let resources = &resources;
+                fn_graph
+                    .stream()
+                    .for_each(|f| async move { f.call(resources) })
+                    .await;
+
+                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                    .take(fn_graph.node_count())
+                    .collect::<Vec<&'static str>>()
+                    .await;
+
+                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+                Ok(())
+            })
+        }
+
+        #[test]
+        fn stream_returns_fns_in_dep_order_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread().build()?;
+            rt.block_on(async {
+                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                fn_graph
+                    .fold_async(resources, |resources, f| {
+                        Box::pin(async move {
+                            f.call_mut(&resources);
+                            resources
+                        })
+                    })
+                    .await;
+
+                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                    .collect::<Vec<&'static str>>()
+                    .await;
+
+                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+                Ok(())
+            })
+        }
+
+        fn complex_graph_unit()
+        -> Result<(FnGraph<Box<dyn FnRes<Ret = ()>>>, Receiver<&'static str>), WouldCycle<Edge>>
+        {
+            // a - b --------- e
+            //   \          / /
+            //    '-- c - d  /
+            //              /
+            //   f --------'
+            //
+            // `b`, `d`, and `f` all require `&mut u16`
+            //
+            // Data edges augmented for `b -> d`,`f -> b`
+
+            let (seq_tx, seq_rx) = mpsc::channel(6);
+            // Wrap in `Option` so that they can be dropped after one invocation, and thus
+            // close the channel.
+            let seq_tx_a = seq_tx.clone();
+            let seq_tx_b = seq_tx.clone();
+            let seq_tx_c = seq_tx.clone();
+            let seq_tx_d = seq_tx.clone();
+            let seq_tx_e = seq_tx.clone();
+            let seq_tx_f = seq_tx;
+
+            let mut fn_graph_builder = FnGraphBuilder::new();
+            let [fn_id_a, fn_id_b, fn_id_c, fn_id_d, fn_id_e, fn_id_f] =
+                fn_graph_builder.add_fns([
+                    (move |_: &u8| {
+                        seq_tx_a
+                            .try_send("a")
+                            .expect("Failed to send sequence `a`.");
+                    })
+                    .into_fn_res(),
+                    (move |_: &mut u16| {
+                        seq_tx_b
+                            .try_send("b")
+                            .expect("Failed to send sequence `b`.");
+                    })
+                    .into_fn_res(),
+                    (move || {
+                        seq_tx_c
+                            .try_send("c")
+                            .expect("Failed to send sequence `c`.");
+                    })
+                    .into_fn_res(),
+                    (move |_: &u8, _: &mut u16| {
+                        seq_tx_d
+                            .try_send("d")
+                            .expect("Failed to send sequence `d`.");
+                    })
+                    .into_fn_res(),
+                    (move || {
+                        seq_tx_e
+                            .try_send("e")
+                            .expect("Failed to send sequence `e`.");
+                    })
+                    .into_fn_res(),
+                    (move |_: &mut u16| {
+                        seq_tx_f
+                            .try_send("f")
+                            .expect("Failed to send sequence `f`.");
+                    })
+                    .into_fn_res(),
+                ]);
+            fn_graph_builder.add_edges([
+                (fn_id_a, fn_id_b),
+                (fn_id_a, fn_id_c),
+                (fn_id_b, fn_id_e),
+                (fn_id_c, fn_id_d),
+                (fn_id_d, fn_id_e),
+                (fn_id_f, fn_id_e),
+            ])?;
+            let fn_graph = fn_graph_builder.build();
+            Ok((fn_graph, seq_rx))
+        }
+
+        fn complex_graph_unit_mut()
+        -> Result<(FnGraph<Box<dyn FnResMut<Ret = ()>>>, Receiver<&'static str>), WouldCycle<Edge>>
+        {
+            // a - b --------- e
+            //   \          / /
+            //    '-- c - d  /
+            //              /
+            //   f --------'
+            //
+            // `b`, `d`, and `f` all require `&mut u16`
+            //
+            // Data edges augmented for `b -> d`,`f -> b`
+
+            let (seq_tx, seq_rx) = mpsc::channel(6);
+            // Wrap in `Option` so that they can be dropped after one invocation, and thus
+            // close the channel.
+            let mut seq_tx_a = Some(seq_tx.clone());
+            let mut seq_tx_b = Some(seq_tx.clone());
+            let mut seq_tx_c = Some(seq_tx.clone());
+            let mut seq_tx_d = Some(seq_tx.clone());
+            let mut seq_tx_e = Some(seq_tx.clone());
+            let mut seq_tx_f = Some(seq_tx);
+
+            let mut fn_graph_builder = FnGraphBuilder::new();
+            let [fn_id_a, fn_id_b, fn_id_c, fn_id_d, fn_id_e, fn_id_f] =
+                fn_graph_builder.add_fns([
+                    (move |_: &u8| {
+                        if let Some(seq_tx_a) = seq_tx_a.take() {
+                            seq_tx_a
+                                .try_send("a")
+                                .expect("Failed to send sequence `a`.");
+                        }
+                    })
+                    .into_fn_res_mut(),
+                    (move |_: &mut u16| {
+                        if let Some(seq_tx_b) = seq_tx_b.take() {
+                            seq_tx_b
+                                .try_send("b")
+                                .expect("Failed to send sequence `b`.");
+                        }
+                    })
+                    .into_fn_res_mut(),
+                    (move || {
+                        if let Some(seq_tx_c) = seq_tx_c.take() {
+                            seq_tx_c
+                                .try_send("c")
+                                .expect("Failed to send sequence `c`.");
+                        }
+                    })
+                    .into_fn_res_mut(),
+                    (move |_: &u8, _: &mut u16| {
+                        if let Some(seq_tx_d) = seq_tx_d.take() {
+                            seq_tx_d
+                                .try_send("d")
+                                .expect("Failed to send sequence `d`.");
+                        }
+                    })
+                    .into_fn_res_mut(),
+                    (move || {
+                        if let Some(seq_tx_e) = seq_tx_e.take() {
+                            seq_tx_e
+                                .try_send("e")
+                                .expect("Failed to send sequence `e`.");
+                        }
+                    })
+                    .into_fn_res_mut(),
+                    (move |_: &mut u16| {
+                        if let Some(seq_tx_f) = seq_tx_f.take() {
+                            seq_tx_f
+                                .try_send("f")
+                                .expect("Failed to send sequence `f`.");
+                        }
+                    })
+                    .into_fn_res_mut(),
+                ]);
+            fn_graph_builder.add_edges([
+                (fn_id_a, fn_id_b),
+                (fn_id_a, fn_id_c),
+                (fn_id_b, fn_id_e),
+                (fn_id_c, fn_id_d),
+                (fn_id_d, fn_id_e),
+                (fn_id_f, fn_id_e),
+            ])?;
+            let fn_graph = fn_graph_builder.build();
+            Ok((fn_graph, seq_rx))
+        }
     }
 
     fn complex_graph() -> Result<FnGraph<Box<dyn FnRes<Ret = &'static str>>>, WouldCycle<Edge>> {

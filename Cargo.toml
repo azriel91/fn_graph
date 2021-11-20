@@ -11,5 +11,16 @@ keywords = ["async", "batch", "dispatch", "function"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+fixedbitset = "0.4.0"
 daggy = { version = "0.8.0", default-features = false }
-resman = { version = "0.10.0", features = ["debug", "fn_res", "fn_meta"] }
+futures = { version = "0.3.17", optional = true }
+fn_meta = { version = "0.4.0", features = ["fn_meta_ext"] }
+tokio = { version = "1.13.0", features = ["sync"] }
+
+[dev-dependencies]
+resman = { version = "0.11.0", features = ["debug", "fn_res", "fn_res_mut", "fn_meta"] }
+tokio = { version = "1.13.0", features = ["rt", "sync", "time"] }
+
+[features]
+default = ["async"]
+async = ["futures"]

@@ -4,6 +4,7 @@ use daggy::{petgraph::visit::IntoNodeReferences, Dag, Walker};
 
 use crate::{Edge, FnId, FnIdInner, Rank};
 
+/// Calculates the rank of each function.
 pub(super) struct RankCalc<F>(PhantomData<F>);
 
 impl<F> RankCalc<F> {

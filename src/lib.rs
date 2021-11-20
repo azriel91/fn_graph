@@ -75,10 +75,7 @@ pub use crate::{
 };
 
 pub use daggy::{self, WouldCycle};
-pub use resman::{
-    fn_meta::{self, FnMeta, FnMetaExt},
-    FnRes, IntoFnRes, Resource, Resources,
-};
+pub use fn_meta::{FnMeta, FnMetaExt};
 
 mod edge;
 mod edge_id;
@@ -87,3 +84,9 @@ mod fn_graph_builder;
 mod fn_id;
 mod fn_id_inner;
 mod rank;
+
+#[cfg(feature = "async")]
+pub use crate::fn_ref::FnRef;
+
+#[cfg(feature = "async")]
+mod fn_ref;

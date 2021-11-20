@@ -1,13 +1,17 @@
 use std::mem::MaybeUninit;
 
 use daggy::{petgraph::algo::toposort, Dag, WouldCycle};
-use resman::FnRes;
+use fn_meta::FnMeta;
 
 use crate::{Edge, EdgeId, FnGraph, FnId, FnIdInner};
 
-use self::{data_edge_augmenter::DataEdgeAugmenter, rank_calc::RankCalc};
+use self::{
+    data_edge_augmenter::DataEdgeAugmenter, predecessor_count_calc::PredecessorCountCalc,
+    rank_calc::RankCalc,
+};
 
 mod data_edge_augmenter;
+mod predecessor_count_calc;
 mod rank_calc;
 
 /// Builder for a [`FnGraph`].
@@ -19,7 +23,7 @@ pub struct FnGraphBuilder<F> {
 
 impl<F> FnGraphBuilder<F>
 where
-    F: FnRes,
+    F: FnMeta,
 {
     /// Returns a new `FnGraphBuilder`.
     pub fn new() -> Self {
@@ -149,11 +153,13 @@ where
         let Self { mut graph } = self;
         let ranks = RankCalc::calc(&graph);
         DataEdgeAugmenter::augment(&mut graph, &ranks);
+        let predecessor_counts = PredecessorCountCalc::calc(&graph);
         let toposort = toposort(&graph, None).expect("Graph should not contain any cycles");
 
         FnGraph {
             graph,
             ranks,
+            predecessor_counts,
             toposort,
         }
     }
