@@ -154,10 +154,26 @@ where
         let ranks = RankCalc::calc(&graph);
         DataEdgeAugmenter::augment(&mut graph, &ranks);
         let predecessor_counts = PredecessorCountCalc::calc(&graph);
+
+        let mut graph_structure = Dag::<(), Edge, FnIdInner>::new();
+        graph.raw_nodes().iter().for_each(|_| {
+            graph_structure.add_node(());
+        });
+        graph
+            .raw_edges()
+            .iter()
+            .try_for_each(|edge| {
+                graph_structure
+                    .add_edge(edge.source(), edge.target(), edge.weight)
+                    .map(|_| ())
+            })
+            .expect("Expected no cycles to be present.");
+
         let toposort = toposort(&graph, None).expect("Graph should not contain any cycles");
 
         FnGraph {
             graph,
+            graph_structure,
             ranks,
             predecessor_counts,
             toposort,
