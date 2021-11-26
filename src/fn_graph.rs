@@ -1,6 +1,10 @@
 use std::ops::{Deref, DerefMut};
 
-use daggy::{petgraph::graph::NodeReferences, Dag, NodeWeightsMut};
+use daggy::{
+    petgraph::{graph::NodeReferences, visit::Topo},
+    Dag, NodeWeightsMut,
+};
+use fixedbitset::FixedBitSet;
 
 use crate::{Edge, FnId, FnIdInner, Rank};
 
@@ -14,7 +18,10 @@ use futures::{
     stream::{self, Stream, StreamExt},
 };
 #[cfg(feature = "async")]
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{self, Receiver, Sender},
+    RwLock,
+};
 
 #[cfg(feature = "async")]
 use crate::FnRef;
@@ -37,11 +44,6 @@ pub struct FnGraph<F> {
     pub(crate) ranks: Vec<Rank>,
     /// Number of predecessors of each function.
     pub(crate) predecessor_counts: Vec<usize>,
-    /// List of function IDs in topological order.
-    ///
-    /// Topological order is where each function is ordered before its
-    /// successors.
-    pub(crate) toposort: Vec<FnId>,
 }
 
 impl<F> FnGraph<F> {
@@ -59,8 +61,8 @@ impl<F> FnGraph<F> {
     ///
     /// Topological order is where each function is ordered before its
     /// successors.
-    pub fn toposort(&self) -> &[FnId] {
-        &self.toposort
+    pub fn toposort(&self) -> Topo<FnId, FixedBitSet> {
+        Topo::new(&self.graph)
     }
 
     /// Returns an iterator of function references in topological order.
@@ -70,10 +72,9 @@ impl<F> FnGraph<F> {
     ///
     /// If you want to iterate over the functions in insertion order, see
     /// [`FnGraph::iter_insertion`];
-    pub fn iter(&self) -> impl Iterator<Item = &F> + ExactSizeIterator + DoubleEndedIterator {
-        self.toposort
-            .iter()
-            .copied()
+    pub fn iter(&self) -> impl Iterator<Item = &F> {
+        Topo::new(&self.graph)
+            .iter(&self.graph)
             .map(|fn_id| &self.graph[fn_id])
     }
 
@@ -91,9 +92,8 @@ impl<F> FnGraph<F> {
         let (fn_done_tx, mut fn_done_rx) = mpsc::channel::<FnId>(self.graph.node_count());
 
         // Preload the channel with all of the functions that have no predecessors
-        self.toposort
-            .iter()
-            .copied()
+        Topo::new(&self.graph)
+            .iter(&self.graph)
             .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
@@ -166,25 +166,21 @@ impl<F> FnGraph<F> {
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(self.graph.node_count());
 
         // Preload the channel with all of the functions that have no predecessors
-        self.toposort
-            .iter()
-            .copied()
+        Topo::new(&self.graph)
+            .iter(&self.graph)
             .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let fn_ready_tx = Some(fn_ready_tx);
-        let fns_remaining = self.graph.node_count();
-        let graph = &mut self.graph;
-
         let queuer = Self::fn_ready_queuer(
             &self.graph_structure,
-            fns_remaining,
             predecessor_counts,
             fn_done_rx,
             fn_ready_tx,
         );
 
+        let fns_remaining = self.graph.node_count();
+        let graph = &mut self.graph;
         let fn_done_tx = Some(fn_done_tx);
         let scheduler = async move {
             let (_graph, _fns_remaining, _fn_done_tx, seed, _fn_fold) = stream::poll_fn(
@@ -235,35 +231,31 @@ impl<F> FnGraph<F> {
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(self.graph.node_count());
 
         // Preload the channel with all of the functions that have no predecessors
-        self.toposort
-            .iter()
-            .copied()
+        Topo::new(&self.graph)
+            .iter(&self.graph)
             .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let fn_ready_tx = Some(fn_ready_tx);
-        let fns_remaining = self.graph.node_count();
-
         let queuer = Self::fn_ready_queuer(
             &self.graph_structure,
-            fns_remaining,
             predecessor_counts,
             fn_done_rx,
             fn_ready_tx,
         );
 
-        let fn_done_tx = tokio::sync::RwLock::new(Some(fn_done_tx));
+        let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
+        let fn_for_each = &fn_for_each;
+        let fns_remaining = self.graph.node_count();
+        let fns_remaining = RwLock::new(fns_remaining);
+        let fns_remaining = &fns_remaining;
         let fn_mut_refs = self
             .graph
             .node_weights_mut()
-            .map(|f| tokio::sync::RwLock::new(f))
+            .map(RwLock::new)
             .collect::<Vec<_>>();
         let fn_mut_refs = &fn_mut_refs;
-        let fn_for_each = &fn_for_each;
-        let fns_remaining = tokio::sync::RwLock::new(fns_remaining);
-        let fns_remaining = &fns_remaining;
         let scheduler = async move {
             stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
                 .for_each_concurrent(limit, |fn_id| async move {
@@ -294,13 +286,16 @@ impl<F> FnGraph<F> {
         futures::join!(queuer, scheduler);
     }
 
+    /// Sends IDs of function whose predecessors have been executed to
+    /// `fn_ready_tx`.
     async fn fn_ready_queuer(
         graph_structure: &Dag<(), Edge, FnIdInner>,
-        fns_remaining: usize,
         predecessor_counts: Vec<usize>,
         mut fn_done_rx: Receiver<FnId>,
-        fn_ready_tx: Option<Sender<FnId>>,
+        fn_ready_tx: Sender<FnId>,
     ) {
+        let fns_remaining = graph_structure.node_count();
+        let fn_ready_tx = Some(fn_ready_tx);
         stream::poll_fn(move |context| fn_done_rx.poll_recv(context))
             .fold(
                 (fns_remaining, predecessor_counts, fn_ready_tx),
@@ -313,7 +308,7 @@ impl<F> FnGraph<F> {
 
                     graph_structure
                         .children(fn_id)
-                        .iter(&graph_structure)
+                        .iter(graph_structure)
                         .for_each(|(_edge_id, child_fn_id)| {
                             predecessor_counts[child_fn_id.index()] -= 1;
                             if predecessor_counts[child_fn_id.index()] == 0 {
@@ -339,38 +334,49 @@ impl<F> FnGraph<F> {
     pub fn map<'f, FnMap, FnMapRet>(
         &'f mut self,
         mut fn_map: FnMap,
-    ) -> impl Iterator<Item = FnMapRet> + ExactSizeIterator + DoubleEndedIterator + 'f
+    ) -> impl Iterator<Item = FnMapRet> + 'f
     where
         FnMap: FnMut(&mut F) -> FnMapRet + 'f,
     {
+        let mut topo = Topo::new(&self.graph);
         let graph = &mut self.graph;
-        self.toposort.iter().copied().map(move |fn_id| {
-            let r#fn = &mut graph[fn_id];
-            fn_map(r#fn)
+        std::iter::from_fn(move || {
+            topo.next(&*graph).map(|fn_id| {
+                let r#fn = &mut graph[fn_id];
+                fn_map(r#fn)
+            })
         })
     }
 
     /// Runs the provided logic with every function and accumulates the result.
-    pub fn fold<Seed, FnFold>(&mut self, seed: Seed, mut fn_fold: FnFold) -> Seed
+    pub fn fold<Seed, FnFold>(&mut self, mut seed: Seed, mut fn_fold: FnFold) -> Seed
     where
         FnFold: FnMut(Seed, &mut F) -> Seed,
     {
-        self.toposort.iter().copied().fold(seed, |seed, fn_id| {
-            let r#fn = &mut self.graph[fn_id];
-            fn_fold(seed, r#fn)
-        })
+        let mut topo = Topo::new(&self.graph);
+        let graph = &mut self.graph;
+        while let Some(r#fn) = topo.next(&*graph).map(|fn_id| &mut graph[fn_id]) {
+            seed = fn_fold(seed, r#fn);
+        }
+        seed
     }
 
     /// Runs the provided logic with every function and accumulates the result,
     /// stopping on the first error.
-    pub fn try_fold<Seed, FnFold, E>(&mut self, seed: Seed, mut fn_fold: FnFold) -> Result<Seed, E>
+    pub fn try_fold<Seed, FnFold, E>(
+        &mut self,
+        mut seed: Seed,
+        mut fn_fold: FnFold,
+    ) -> Result<Seed, E>
     where
         FnFold: FnMut(Seed, &mut F) -> Result<Seed, E>,
     {
-        self.toposort.iter().copied().try_fold(seed, |seed, fn_id| {
-            let r#fn = &mut self.graph[fn_id];
-            fn_fold(seed, r#fn)
-        })
+        let mut topo = Topo::new(&self.graph);
+        let graph = &mut self.graph;
+        while let Some(r#fn) = topo.next(&*graph).map(|fn_id| &mut graph[fn_id]) {
+            seed = fn_fold(seed, r#fn)?;
+        }
+        Ok(seed)
     }
 
     /// Runs the provided logic over the functions.
@@ -378,10 +384,11 @@ impl<F> FnGraph<F> {
     where
         FnForEach: FnMut(&mut F),
     {
-        self.toposort.iter().copied().for_each(|fn_id| {
-            let r#fn = &mut self.graph[fn_id];
-            fn_for_each(r#fn)
-        })
+        let mut topo = Topo::new(&self.graph);
+        let graph = &mut self.graph;
+        while let Some(r#fn) = topo.next(&*graph).map(|fn_id| &mut graph[fn_id]) {
+            fn_for_each(r#fn);
+        }
     }
 
     /// Runs the provided logic over the functions, stopping on the first error.
@@ -389,10 +396,12 @@ impl<F> FnGraph<F> {
     where
         FnForEach: FnMut(&mut F) -> Result<(), E>,
     {
-        self.toposort.iter().copied().try_for_each(|fn_id| {
-            let r#fn = &mut self.graph[fn_id];
-            fn_for_each(r#fn)
-        })
+        let mut topo = Topo::new(&self.graph);
+        let graph = &mut self.graph;
+        while let Some(r#fn) = topo.next(&*graph).map(|fn_id| &mut graph[fn_id]) {
+            fn_for_each(r#fn)?;
+        }
+        Ok(())
     }
 
     /// Returns an iterator of function references in insertion order.
@@ -428,7 +437,6 @@ impl<F> Default for FnGraph<F> {
             graph_structure: Dag::new(),
             ranks: Vec::new(),
             predecessor_counts: Vec::new(),
-            toposort: Vec::new(),
         }
     }
 }
@@ -463,7 +471,6 @@ mod tests {
 
         assert_eq!(0, fn_graph.node_count());
         assert!(fn_graph.ranks().is_empty());
-        assert!(fn_graph.toposort().is_empty());
     }
 
     #[test]
@@ -478,9 +485,7 @@ mod tests {
             .map(|f| f.call(&resources))
             .collect::<Vec<_>>();
 
-        // Note: the `toposort` algorithm is provided by `petgraph`, and it appears to
-        // inverse the order of same-ranked nodes.
-        assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+        assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
     }
 
@@ -493,7 +498,7 @@ mod tests {
         resources.insert(0u16);
         let fn_iter_order = fn_graph.map(|f| f.call(&resources)).collect::<Vec<_>>();
 
-        assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+        assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
     }
 
@@ -512,7 +517,7 @@ mod tests {
             },
         );
 
-        assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+        assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
     }
 
@@ -531,7 +536,7 @@ mod tests {
             },
         )?;
 
-        assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+        assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
     }
 
@@ -546,7 +551,7 @@ mod tests {
         let mut fn_iter_order = Vec::with_capacity(fn_graph.node_count());
         fn_graph.for_each(|f| fn_iter_order.push(f.call(&resources)));
 
-        assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+        assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
     }
 
@@ -561,7 +566,7 @@ mod tests {
         let mut fn_iter_order = Vec::with_capacity(fn_graph.node_count());
         fn_graph.try_for_each(|f| Ok(fn_iter_order.push(f.call(&resources))))?;
 
-        assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+        assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
     }
 

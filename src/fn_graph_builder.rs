@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use daggy::{petgraph::algo::toposort, Dag, WouldCycle};
+use daggy::{Dag, WouldCycle};
 use fn_meta::FnMeta;
 
 use crate::{Edge, EdgeId, FnGraph, FnId, FnIdInner};
@@ -169,14 +169,11 @@ where
             })
             .expect("Expected no cycles to be present.");
 
-        let toposort = toposort(&graph, None).expect("Graph should not contain any cycles");
-
         FnGraph {
             graph,
             graph_structure,
             ranks,
             predecessor_counts,
-            toposort,
         }
     }
 }
