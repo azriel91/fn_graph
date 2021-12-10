@@ -75,7 +75,7 @@ pub use crate::{
 };
 
 pub use daggy::{self, WouldCycle};
-pub use fn_meta::{FnMeta, FnMetaExt};
+pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt, TypeIds};
 
 mod edge;
 mod edge_id;
