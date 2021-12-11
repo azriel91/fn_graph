@@ -88,8 +88,9 @@ impl<F> FnGraph<F> {
         // is dropped, and if `predecessor_counts[child_fn_id]` is 0, the stream
         // can produce `child_fn`s.
         let mut predecessor_counts = self.predecessor_counts.clone();
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(self.graph.node_count());
-        let (fn_done_tx, mut fn_done_rx) = mpsc::channel::<FnId>(self.graph.node_count());
+        let channel_capacity = std::cmp::max(1, self.graph.node_count());
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
+        let (fn_done_tx, mut fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
         // Preload the channel with all of the functions that have no predecessors
         Topo::new(&self.graph)
@@ -162,8 +163,9 @@ impl<F> FnGraph<F> {
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
         let predecessor_counts = self.predecessor_counts.clone();
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(self.graph.node_count());
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(self.graph.node_count());
+        let channel_capacity = std::cmp::max(1, self.graph.node_count());
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
+        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
         // Preload the channel with all of the functions that have no predecessors
         Topo::new(&self.graph)
@@ -227,8 +229,9 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
     {
         let predecessor_counts = self.predecessor_counts.clone();
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(self.graph.node_count());
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(self.graph.node_count());
+        let channel_capacity = std::cmp::max(1, self.graph.node_count());
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
+        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
         // Preload the channel with all of the functions that have no predecessors
         Topo::new(&self.graph)
