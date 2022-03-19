@@ -64,7 +64,7 @@ impl<F> FnGraph<F> {
     /// Topological order is where each function is ordered before its
     /// successors.
     pub fn toposort(&self) -> Topo<FnId, FixedBitSet> {
-        Topo::new(&self.graph)
+        Topo::new(&self.graph_structure)
     }
 
     /// Returns an iterator of function references in topological order.
@@ -73,10 +73,26 @@ impl<F> FnGraph<F> {
     /// successors.
     ///
     /// If you want to iterate over the functions in insertion order, see
-    /// [`FnGraph::iter_insertion`];
+    /// [`FnGraph::iter_insertion`].
     pub fn iter(&self) -> impl Iterator<Item = &F> {
-        Topo::new(&self.graph)
-            .iter(&self.graph)
+        Topo::new(&self.graph_structure)
+            .iter(&self.graph_structure)
+            .map(|fn_id| &self.graph[fn_id])
+    }
+
+    /// Returns an iterator of function references in reverse topological order.
+    ///
+    /// Topological order is where each function is ordered before its
+    /// successors, so this returns the function references from the leaf nodes
+    /// to the root.
+    ///
+    /// If you want to iterate over the functions in reverse insertion order,
+    /// use [`FnGraph::iter_insertion`], then call [`.rev()`].
+    ///
+    /// [`.rev()`]: std::iter::Iterator::rev
+    pub fn iter_rev(&self) -> impl Iterator<Item = &F> {
+        Topo::new(&self.graph_structure_rev)
+            .iter(&self.graph_structure_rev)
             .map(|fn_id| &self.graph[fn_id])
     }
 
@@ -569,6 +585,22 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn iter_rev_returns_fns_in_dep_rev_order() -> Result<(), WouldCycle<Edge>> {
+        let fn_graph = complex_graph()?;
+
+        let mut resources = Resources::new();
+        resources.insert(0u8);
+        resources.insert(0u16);
+        let fn_iter_order = fn_graph
+            .iter_rev()
+            .map(|f| f.call(&resources))
+            .collect::<Vec<_>>();
+
+        assert_eq!(["e", "d", "c", "b", "a", "f"], fn_iter_order.as_slice());
         Ok(())
     }
 
