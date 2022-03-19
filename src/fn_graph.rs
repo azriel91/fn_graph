@@ -146,7 +146,7 @@ impl<F> FnGraph<F> {
                 Poll::Ready(None) => {}
                 Poll::Ready(Some(fn_id)) => graph_structure
                     .children(fn_id)
-                    .iter(&graph_structure)
+                    .iter(graph_structure)
                     .for_each(|(_edge_id, child_fn_id)| {
                         predecessor_counts[child_fn_id.index()] -= 1;
                         if predecessor_counts[child_fn_id.index()] == 0 {
