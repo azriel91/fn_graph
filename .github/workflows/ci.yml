@@ -75,11 +75,18 @@ jobs:
           toolchain: nightly
           override: true
 
-      - uses: actions-rs/install@v0.1
+      - name: tarpaulin Cache
+        id: tarpaulin_cache
+        uses: actions/cache@v2
         with:
-          crate: cargo-tarpaulin
-          version: latest
-          use-tool-cache: true
+          path: ~/.cargo/bin/cargo-tarpaulin
+          key: ${{ runner.os }}-cargo-tarpaulin
+
+      - uses: actions-rs/cargo@v1
+        if: steps.tarpaulin_cache.outputs.cache-hit != 'true'
+        with:
+          command: install
+          args: cargo-tarpaulin
 
       - name: 'Run `cargo-tarpaulin`'
         uses: actions-rs/cargo@v1
