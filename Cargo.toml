@@ -3,11 +3,11 @@ name = "fn_graph"
 version = "0.1.0"
 authors = ["Azriel Hoh <azriel91@gmail.com>"]
 edition = "2021"
-description = "Batched function execution."
+description = "Dynamically managed function graph execution."
 repository = "https://github.com/azriel91/fn_graph"
 documentation = "https://docs.rs/fn_graph/"
 readme = "README.md"
-keywords = ["async", "batch", "dispatch", "function"]
+keywords = ["async", "batch", "dispatch", "function", "graph"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]

@@ -286,6 +286,17 @@ impl<F> FnGraph<F> {
         seed
     }
 
+    /// Runs the provided logic over the functions concurrently in topological
+    /// order.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
     pub async fn for_each_concurrent<FnForEach>(
         &mut self,
@@ -298,6 +309,17 @@ impl<F> FnGraph<F> {
             .await
     }
 
+    /// Runs the provided logic over the functions concurrently in reverse
+    /// topological order.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
     pub async fn for_each_concurrent_rev<FnForEach>(
         &mut self,

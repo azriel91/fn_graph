@@ -1,4 +1,4 @@
-//! Dynamically managed function graph.
+//! Dynamically managed function graph execution.
 //!
 //! This crate provides a `FnGraph`, where consumers can register a list of
 //! functions and their interdependencies. The graph can then return a stream of

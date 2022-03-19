@@ -2,10 +2,10 @@
 
 [![Crates.io](https://img.shields.io/crates/v/fn_graph.svg)](https://crates.io/crates/fn_graph)
 [![docs.rs](https://img.shields.io/docsrs/fn_graph)](https://docs.rs/fn_graph)
-![CI](https://github.com/azriel91/fn_graph/workflows/CI/badge.svg)
+[![CI](https://github.com/azriel91/fn_graph/workflows/CI/badge.svg)](https://github.com/azriel91/fn_graph/actions/workflows/ci.yml)
 [![Coverage Status](https://codecov.io/gh/azriel91/fn_graph/branch/main/graph/badge.svg)](https://codecov.io/gh/azriel91/fn_graph)
 
-Dynamically managed function graph.
+Dynamically managed function graph execution.
 
 This crate provides a `FnGraph`, where consumers can register a list of
 functions and their interdependencies. The graph can then return a stream of
