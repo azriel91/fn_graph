@@ -70,14 +70,15 @@
 //! [`FnMeta`]: fn_res::fn_meta::FnMeta
 
 pub use crate::{
-    edge::Edge, edge_id::EdgeId, fn_graph::FnGraph, fn_graph_builder::FnGraphBuilder, fn_id::FnId,
-    fn_id_inner::FnIdInner, rank::Rank,
+    edge::Edge, edge_counts::EdgeCounts, edge_id::EdgeId, fn_graph::FnGraph,
+    fn_graph_builder::FnGraphBuilder, fn_id::FnId, fn_id_inner::FnIdInner, rank::Rank,
 };
 
 pub use daggy::{self, WouldCycle};
 pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt, TypeIds};
 
 mod edge;
+mod edge_counts;
 mod edge_id;
 mod fn_graph;
 mod fn_graph_builder;

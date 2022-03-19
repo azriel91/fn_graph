@@ -6,7 +6,7 @@ use daggy::{
 };
 use fixedbitset::FixedBitSet;
 
-use crate::{Edge, FnId, FnIdInner, Rank};
+use crate::{Edge, EdgeCounts, FnId, FnIdInner, Rank};
 
 #[cfg(feature = "async")]
 use daggy::Walker;
@@ -35,15 +35,17 @@ use crate::FnRef;
 pub struct FnGraph<F> {
     /// Graph of functions.
     pub graph: Dag<F, Edge, FnIdInner>,
-    /// Graph of functions.
+    /// Structure of the graph, with `()` as the node weights.
     pub(crate) graph_structure: Dag<(), Edge, FnIdInner>,
+    /// Reversed structure of the graph, with `()` as the node weights.
+    pub(crate) graph_structure_rev: Dag<(), Edge, FnIdInner>,
     /// Rank of each function.
     ///
     /// The `FnId` is guaranteed to match the index in the `Vec` as we never
     /// remove from the graph. So we don't need to use a `HashMap` here.
     pub(crate) ranks: Vec<Rank>,
-    /// Number of predecessors of each function.
-    pub(crate) predecessor_counts: Vec<usize>,
+    /// Number of incoming and outgoing edges of each function.
+    pub(crate) edge_counts: EdgeCounts,
 }
 
 impl<F> FnGraph<F> {
@@ -84,30 +86,52 @@ impl<F> FnGraph<F> {
     /// have returned.
     #[cfg(feature = "async")]
     pub fn stream(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
+        self.stream_internal(&self.graph_structure, self.edge_counts.incoming().to_vec())
+    }
+
+    /// Returns a stream of function references in reverse topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(feature = "async")]
+    pub fn stream_rev(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
+        self.stream_internal(
+            &self.graph_structure_rev,
+            self.edge_counts.outgoing().to_vec(),
+        )
+    }
+
+    #[cfg(feature = "async")]
+    fn stream_internal<'f>(
+        &'f self,
+        graph_structure: &'f Dag<(), Edge, FnIdInner>,
+        mut predecessor_counts: Vec<usize>,
+    ) -> impl Stream<Item = FnRef<'f, F>> + 'f {
         // Decrement `predecessor_counts[child_fn_id]` every time a function ref
         // is dropped, and if `predecessor_counts[child_fn_id]` is 0, the stream
         // can produce `child_fn`s.
-        let mut predecessor_counts = self.predecessor_counts.clone();
-        let channel_capacity = std::cmp::max(1, self.graph.node_count());
+        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
         let (fn_done_tx, mut fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
         // Preload the channel with all of the functions that have no predecessors
-        Topo::new(&self.graph)
-            .iter(&self.graph)
+        Topo::new(&graph_structure)
+            .iter(&graph_structure)
             .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let mut fns_remaining = self.graph.node_count();
+        let mut fns_remaining = graph_structure.node_count();
         let mut fn_ready_tx = Some(fn_ready_tx);
         let mut fn_done_tx = Some(fn_done_tx);
         stream::poll_fn(move |context| {
             match fn_done_rx.poll_recv(context) {
                 Poll::Pending => {}
                 Poll::Ready(None) => {}
-                Poll::Ready(Some(fn_id)) => self.graph.children(fn_id).iter(&self.graph).for_each(
-                    |(_edge_id, child_fn_id)| {
+                Poll::Ready(Some(fn_id)) => graph_structure
+                    .children(fn_id)
+                    .iter(&graph_structure)
+                    .for_each(|(_edge_id, child_fn_id)| {
                         predecessor_counts[child_fn_id.index()] -= 1;
                         if predecessor_counts[child_fn_id.index()] == 0 {
                             if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
@@ -120,8 +144,7 @@ impl<F> FnGraph<F> {
                                 });
                             }
                         }
-                    },
-                ),
+                    }),
             }
 
             let poll = if let Some(fn_done_tx) = fn_done_tx.as_ref() {
@@ -162,26 +185,54 @@ impl<F> FnGraph<F> {
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
-        let predecessor_counts = self.predecessor_counts.clone();
-        let channel_capacity = std::cmp::max(1, self.graph.node_count());
+        self.fold_async_internal(seed, fn_fold, false).await
+    }
+
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(feature = "async")]
+    pub async fn fold_rev_async<'f, Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    where
+        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+    {
+        self.fold_async_internal(seed, fn_fold, true).await
+    }
+
+    #[cfg(feature = "async")]
+    async fn fold_async_internal<'f, Seed, FnFold>(
+        &mut self,
+        seed: Seed,
+        fn_fold: FnFold,
+        reverse: bool,
+    ) -> Seed
+    where
+        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+    {
+        let (graph_structure, predecessor_counts) = if reverse {
+            (
+                &self.graph_structure_rev,
+                self.edge_counts.outgoing().to_vec(),
+            )
+        } else {
+            (&self.graph_structure, self.edge_counts.incoming().to_vec())
+        };
+        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
         // Preload the channel with all of the functions that have no predecessors
-        Topo::new(&self.graph)
-            .iter(&self.graph)
+        Topo::new(&graph_structure)
+            .iter(&graph_structure)
             .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer = Self::fn_ready_queuer(
-            &self.graph_structure,
-            predecessor_counts,
-            fn_done_rx,
-            fn_ready_tx,
-        );
+        let queuer =
+            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
 
-        let fns_remaining = self.graph.node_count();
+        let fns_remaining = graph_structure.node_count();
         let graph = &mut self.graph;
         let fn_done_tx = Some(fn_done_tx);
         let scheduler = async move {
@@ -219,7 +270,6 @@ impl<F> FnGraph<F> {
         seed
     }
 
-    // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
     pub async fn for_each_concurrent<FnForEach>(
         &mut self,
@@ -228,29 +278,58 @@ impl<F> FnGraph<F> {
     ) where
         FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
     {
-        let predecessor_counts = self.predecessor_counts.clone();
-        let channel_capacity = std::cmp::max(1, self.graph.node_count());
+        self.for_each_concurrent_internal(limit, fn_for_each, false)
+            .await
+    }
+
+    #[cfg(feature = "async")]
+    pub async fn for_each_concurrent_rev<FnForEach>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_for_each: FnForEach,
+    ) where
+        FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
+    {
+        self.for_each_concurrent_internal(limit, fn_for_each, true)
+            .await
+    }
+
+    // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
+    #[cfg(feature = "async")]
+    async fn for_each_concurrent_internal<FnForEach>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_for_each: FnForEach,
+        reverse: bool,
+    ) where
+        FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
+    {
+        let (graph_structure, predecessor_counts) = if reverse {
+            (
+                &self.graph_structure_rev,
+                self.edge_counts.outgoing().to_vec(),
+            )
+        } else {
+            (&self.graph_structure, self.edge_counts.incoming().to_vec())
+        };
+        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
         // Preload the channel with all of the functions that have no predecessors
-        Topo::new(&self.graph)
-            .iter(&self.graph)
+        Topo::new(graph_structure)
+            .iter(graph_structure)
             .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer = Self::fn_ready_queuer(
-            &self.graph_structure,
-            predecessor_counts,
-            fn_done_rx,
-            fn_ready_tx,
-        );
+        let queuer =
+            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
-        let fns_remaining = self.graph.node_count();
+        let fns_remaining = graph_structure.node_count();
         let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
         let fn_mut_refs = self
@@ -438,8 +517,9 @@ impl<F> Default for FnGraph<F> {
         Self {
             graph: Dag::new(),
             graph_structure: Dag::new(),
+            graph_structure_rev: Dag::new(),
             ranks: Vec::new(),
-            predecessor_counts: Vec::new(),
+            edge_counts: EdgeCounts::default(),
         }
     }
 }
@@ -687,6 +767,34 @@ mod tests {
         }
 
         #[test]
+        fn stream_rev_returns_fns_in_dep_rev_order_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()?;
+            rt.block_on(async {
+                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                let resources = &resources;
+                fn_graph
+                    .stream_rev()
+                    .for_each_concurrent(4, |f| async move { f.call(resources).await })
+                    .await;
+
+                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                    .take(fn_graph.node_count())
+                    .collect::<Vec<&'static str>>()
+                    .await;
+
+                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+                Ok(())
+            })
+        }
+
+        #[test]
         fn fold_async_runs_fns_in_dep_order_concurrently_mut()
         -> Result<(), Box<dyn std::error::Error>> {
             let rt = runtime::Builder::new_current_thread()
@@ -717,6 +825,36 @@ mod tests {
         }
 
         #[test]
+        fn fold_rev_async_runs_fns_in_dep_rev_order_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()?;
+            rt.block_on(async {
+                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                fn_graph
+                    .fold_rev_async(resources, |resources, f| {
+                        Box::pin(async move {
+                            f.call_mut(&resources).await;
+                            resources
+                        })
+                    })
+                    .await;
+
+                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                    .collect::<Vec<&'static str>>()
+                    .await;
+
+                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+                Ok(())
+            })
+        }
+
+        #[test]
         fn for_each_concurrent_runs_fns_concurrently_mut() -> Result<(), Box<dyn std::error::Error>>
         {
             let rt = runtime::Builder::new_current_thread()
@@ -738,6 +876,32 @@ mod tests {
                     .await;
 
                 assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+                Ok(())
+            })
+        }
+
+        #[test]
+        fn for_each_concurrent_rev_runs_fns_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()?;
+            rt.block_on(async {
+                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                let resources = &resources;
+                fn_graph
+                    .for_each_concurrent_rev(None, |f| f.call_mut(resources).boxed())
+                    .await;
+
+                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                    .collect::<Vec<&'static str>>()
+                    .await;
+
+                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
                 Ok(())
             })
         }

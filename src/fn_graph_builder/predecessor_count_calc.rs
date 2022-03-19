@@ -2,27 +2,37 @@ use std::marker::PhantomData;
 
 use daggy::{Dag, Walker};
 
-use crate::{Edge, FnIdInner};
+use crate::{Edge, EdgeCounts, FnIdInner};
 
 /// Calculates the number of predecessors of each function.
 pub(super) struct PredecessorCountCalc<F>(PhantomData<F>);
 
 impl<F> PredecessorCountCalc<F> {
     /// Returns the number of predecessors each function has.
-    pub(super) fn calc(graph: &Dag<F, Edge, FnIdInner>) -> Vec<usize> {
-        graph.graph().node_indices().fold(
-            vec![0usize; graph.node_count()],
-            |mut predecessor_counts, fn_id| {
+    pub(super) fn calc(graph: &Dag<F, Edge, FnIdInner>) -> EdgeCounts {
+        let (incoming, outgoing) = graph.graph().node_indices().fold(
+            (
+                vec![0usize; graph.node_count()],
+                vec![0usize; graph.node_count()],
+            ),
+            |(mut incoming, mut outgoing), fn_id| {
                 graph
                     .children(fn_id)
                     .iter(graph)
                     .for_each(|(_edge_id, child_fn_id)| {
-                        predecessor_counts[child_fn_id.index()] += 1;
+                        incoming[child_fn_id.index()] += 1;
+                    });
+                graph
+                    .parents(fn_id)
+                    .iter(graph)
+                    .for_each(|(_edge_id, parent_fn_id)| {
+                        outgoing[parent_fn_id.index()] += 1;
                     });
 
-                predecessor_counts
+                (incoming, outgoing)
             },
-        )
+        );
+        EdgeCounts::new(incoming, outgoing)
     }
 }
 
@@ -42,9 +52,9 @@ mod tests {
         graph.add_node((|| {}).into_fn_res());
         graph.add_node((|| {}).into_fn_res());
 
-        let predecessor_counts = PredecessorCountCalc::calc(&graph);
+        let edge_counts = PredecessorCountCalc::calc(&graph);
 
-        assert_eq!([0, 0], predecessor_counts.as_slice());
+        assert_eq!([0, 0], edge_counts.incoming());
     }
 
     #[test]
@@ -57,9 +67,9 @@ mod tests {
         graph.update_edge(fn_id_a, fn_id_b, Edge::Logic)?;
         graph.update_edge(fn_id_b, fn_id_c, Edge::Logic)?;
 
-        let predecessor_counts = PredecessorCountCalc::calc(&graph);
+        let edge_counts = PredecessorCountCalc::calc(&graph);
 
-        assert_eq!([0, 1, 1], predecessor_counts.as_slice());
+        assert_eq!([0, 1, 1], edge_counts.incoming());
         Ok(())
     }
 
@@ -73,9 +83,9 @@ mod tests {
         graph.update_edge(fn_id_c, fn_id_b, Edge::Logic)?;
         graph.update_edge(fn_id_b, fn_id_a, Edge::Data)?;
 
-        let predecessor_counts = PredecessorCountCalc::calc(&graph);
+        let edge_counts = PredecessorCountCalc::calc(&graph);
 
-        assert_eq!([1, 1, 0], predecessor_counts.as_slice());
+        assert_eq!([1, 1, 0], edge_counts.incoming());
         Ok(())
     }
 
@@ -93,9 +103,9 @@ mod tests {
         graph.update_edge(fn_id_b, fn_id_c, Edge::Data)?;
         graph.update_edge(fn_id_d, fn_id_c, Edge::Logic)?;
 
-        let predecessor_counts = PredecessorCountCalc::calc(&graph);
+        let edge_counts = PredecessorCountCalc::calc(&graph);
 
-        assert_eq!([0, 1, 2, 0], predecessor_counts.as_slice());
+        assert_eq!([0, 1, 2, 0], edge_counts.incoming());
         Ok(())
     }
 
@@ -121,9 +131,9 @@ mod tests {
         graph.update_edge(fn_id_d, fn_id_e, Edge::Data)?;
         graph.update_edge(fn_id_f, fn_id_e, Edge::Data)?;
 
-        let predecessor_counts = PredecessorCountCalc::calc(&graph);
+        let edge_counts = PredecessorCountCalc::calc(&graph);
 
-        assert_eq!([0, 1, 2, 1, 3, 0], predecessor_counts.as_slice());
+        assert_eq!([0, 1, 2, 1, 3, 0], edge_counts.incoming());
         Ok(())
     }
 
@@ -149,9 +159,9 @@ mod tests {
         graph.update_edge(fn_id_e, fn_id_b, Edge::Data)?;
         graph.update_edge(fn_id_d, fn_id_b, Edge::Data)?;
 
-        let predecessor_counts = PredecessorCountCalc::calc(&graph);
+        let edge_counts = PredecessorCountCalc::calc(&graph);
 
-        assert_eq!([1, 3, 0, 0, 1, 2], predecessor_counts.as_slice());
+        assert_eq!([1, 3, 0, 0, 1, 2], edge_counts.incoming());
         Ok(())
     }
 }

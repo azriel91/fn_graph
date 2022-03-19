@@ -153,11 +153,13 @@ where
         let Self { mut graph } = self;
         let ranks = RankCalc::calc(&graph);
         DataEdgeAugmenter::augment(&mut graph, &ranks);
-        let predecessor_counts = PredecessorCountCalc::calc(&graph);
+        let edge_counts = PredecessorCountCalc::calc(&graph);
 
         let mut graph_structure = Dag::<(), Edge, FnIdInner>::new();
+        let mut graph_structure_rev = Dag::<(), Edge, FnIdInner>::new();
         graph.raw_nodes().iter().for_each(|_| {
             graph_structure.add_node(());
+            graph_structure_rev.add_node(());
         });
         graph
             .raw_edges()
@@ -165,6 +167,9 @@ where
             .try_for_each(|edge| {
                 graph_structure
                     .add_edge(edge.source(), edge.target(), edge.weight)
+                    .map(|_| ())?;
+                graph_structure_rev
+                    .add_edge(edge.target(), edge.source(), edge.weight)
                     .map(|_| ())
             })
             .expect("Expected no cycles to be present.");
@@ -172,8 +177,9 @@ where
         FnGraph {
             graph,
             graph_structure,
+            graph_structure_rev,
             ranks,
-            predecessor_counts,
+            edge_counts,
         }
     }
 }
