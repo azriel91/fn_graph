@@ -762,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn iter_with_indicies_returns_fns_with_indicies() {
+    fn iter_with_indices_returns_fns_with_indices() {
         let resources = Resources::new();
         let fn_graph = {
             let mut fn_graph_builder = FnGraphBuilder::new();

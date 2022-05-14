@@ -55,7 +55,7 @@ The concept of a runtime managed data-dependency task graph is from
 
 * Instead of grouping functions by stages to manage data access conflicts,
   `fn_graph` keeps a dependency graph of logic and data dependencies, and
-  executes functions when the preceeding functions are complete.
+  executes functions when the preceding functions are complete.
 
     This allows for slightly less waiting time for subsequent functions with
     data dependencies, as each may begin once its predecessors finish,
