@@ -1,5 +1,8 @@
 [default]
 
+[fn_meta]
+features = "fn_meta"
+
 [report]
 out = ["Html", "Xml"]
 output-dir = "target/tarpaulin"
