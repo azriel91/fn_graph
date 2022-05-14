@@ -73,14 +73,8 @@ where
         // let fn_ids = unsafe { mem::transmute::<_, [NodeIndex<FnId>; N]>(fn_ids) };
 
         #[allow(clippy::let_and_return)] // for clarity with `unsafe`
-        let fn_ids = {
-            let ptr = &mut fn_ids as *mut _ as *mut [FnId; N];
-            let array = unsafe { ptr.read() };
-
-            // We don't have to `mem::forget` the original because `FnId` is `Copy`.
-            // mem::forget(fn_ids);
-
-            array
+        let fn_ids = unsafe {
+            (&*(&MaybeUninit::new(fn_ids) as *const _ as *const MaybeUninit<_>)).assume_init_read()
         };
 
         fn_ids
@@ -135,14 +129,9 @@ where
         // let edge_ids = unsafe { mem::transmute::<_, [EdgeId; N]>(edge_ids) };
 
         #[allow(clippy::let_and_return)] // for clarity with `unsafe`
-        let edge_ids = {
-            let ptr = &mut edge_ids as *mut _ as *mut [EdgeId; N];
-            let array = unsafe { ptr.read() };
-
-            // We don't have to `mem::forget` the original because `EdgeId` is `Copy`.
-            // mem::forget(edge_ids);
-
-            array
+        let edge_ids = unsafe {
+            (&*(&MaybeUninit::new(edge_ids) as *const _ as *const MaybeUninit<_>))
+                .assume_init_read()
         };
 
         Ok(edge_ids)
