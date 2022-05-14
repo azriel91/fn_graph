@@ -1,15 +1,14 @@
 use std::marker::PhantomData;
 
 use daggy::{petgraph::algo::has_path_connecting, Dag};
-use fn_meta::FnMeta;
 
-use crate::{Edge, FnId, FnIdInner, Rank};
+use crate::{DataAccess, Edge, FnId, FnIdInner, Rank};
 
 pub(super) struct DataEdgeAugmenter<F>(PhantomData<F>);
 
 impl<F> DataEdgeAugmenter<F>
 where
-    F: FnMeta,
+    F: DataAccess,
 {
     /// Adds forward edges between functions with data access dependencies.
     ///
@@ -90,6 +89,7 @@ where
     }
 }
 
+#[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
     use daggy::{petgraph::algo::all_simple_paths, Dag, WouldCycle};

@@ -70,13 +70,24 @@
 //! [`FnMeta`]: fn_res::fn_meta::FnMeta
 
 pub use crate::{
-    edge::Edge, edge_counts::EdgeCounts, edge_id::EdgeId, fn_graph::FnGraph,
-    fn_graph_builder::FnGraphBuilder, fn_id::FnId, fn_id_inner::FnIdInner, rank::Rank,
+    data_access::{DataAccess, R, W},
+    edge::Edge,
+    edge_counts::EdgeCounts,
+    edge_id::EdgeId,
+    fn_graph::FnGraph,
+    fn_graph_builder::FnGraphBuilder,
+    fn_id::FnId,
+    fn_id_inner::FnIdInner,
+    rank::Rank,
+    type_ids::TypeIds,
 };
 
 pub use daggy::{self, WouldCycle};
-pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt, TypeIds};
 
+#[cfg(feature = "fn_meta")]
+pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
+
+mod data_access;
 mod edge;
 mod edge_counts;
 mod edge_id;
@@ -85,6 +96,7 @@ mod fn_graph_builder;
 mod fn_id;
 mod fn_id_inner;
 mod rank;
+mod type_ids;
 
 #[cfg(feature = "async")]
 pub use crate::{fn_ref::FnRef, fn_ref_mut::FnRefMut};

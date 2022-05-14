@@ -578,6 +578,7 @@ impl<F> DerefMut for FnGraph<F> {
     }
 }
 
+#[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
     use daggy::WouldCycle;

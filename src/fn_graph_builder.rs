@@ -1,9 +1,8 @@
 use std::mem::MaybeUninit;
 
 use daggy::{Dag, WouldCycle};
-use fn_meta::FnMeta;
 
-use crate::{Edge, EdgeId, FnGraph, FnId, FnIdInner};
+use crate::{DataAccess, Edge, EdgeId, FnGraph, FnId, FnIdInner};
 
 use self::{
     data_edge_augmenter::DataEdgeAugmenter, predecessor_count_calc::PredecessorCountCalc,
@@ -23,7 +22,7 @@ pub struct FnGraphBuilder<F> {
 
 impl<F> FnGraphBuilder<F>
 where
-    F: FnMeta,
+    F: DataAccess,
 {
     /// Returns a new `FnGraphBuilder`.
     pub fn new() -> Self {
@@ -181,6 +180,7 @@ impl<F> Default for FnGraphBuilder<F> {
     }
 }
 
+#[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
     use daggy::WouldCycle;
