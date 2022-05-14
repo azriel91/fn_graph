@@ -16,11 +16,11 @@ fixedbitset = "0.4.1"
 daggy = { version = "0.8.0", default-features = false }
 fn_meta = { version = "0.4.1", optional = true, features = ["fn_meta_ext"] }
 futures = { version = "0.3.21", optional = true }
-tokio = { version = "1.17.0", features = ["sync"] }
+tokio = { version = "1.18.2", features = ["sync"] }
 
 [dev-dependencies]
 resman = { version = "0.11.0", features = ["debug", "fn_res", "fn_res_mut", "fn_meta"] }
-tokio = { version = "1.17.0", features = ["rt", "sync", "time"] }
+tokio = { version = "1.18.2", features = ["rt", "sync", "time"] }
 
 [features]
 default = ["async"]
