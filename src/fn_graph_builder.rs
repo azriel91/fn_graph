@@ -68,7 +68,7 @@ where
         // Unfortunately we cannot use this, see the following issues:
         //
         // * <https://github.com/rust-lang/rust/issues/61956>
-        // * <https://github.com/rust-lang/rust/issues/80908>
+        // * <https://github.com/rust-lang/rust/issues/96097>
         //
         // let fn_ids = unsafe { mem::transmute::<_, [NodeIndex<FnId>; N]>(fn_ids) };
 
@@ -124,7 +124,7 @@ where
         // Unfortunately we cannot use this, see the following issues:
         //
         // * <https://github.com/rust-lang/rust/issues/61956>
-        // * <https://github.com/rust-lang/rust/issues/80908>
+        // * <https://github.com/rust-lang/rust/issues/96097>
         //
         // let edge_ids = unsafe { mem::transmute::<_, [EdgeId; N]>(edge_ids) };
 
