@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 (2022-05-15)
+
+* Add `DataAccess` trait, and `R` and `W` types.
+* Feature gate `fn_meta` crate.
+
 ## 0.2.0 (2022-03-19)
 
 * Add `_rev` function to allow iteration / streaming in reverse topological order. These include:
