@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0 (2022-05-22)
+
+* Update `fn_meta` to `0.5.0`.
+
 ## 0.3.0 (2022-05-15)
 
 * Add `DataAccess` trait, and `R` and `W` types.

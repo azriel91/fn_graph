@@ -10,6 +10,17 @@
 //! closures and functions, but any type that implements the [`FnRes`] and
 //! [`FnMeta`] traits.
 //!
+//! # Usage
+//!
+//! Add the following to `Cargo.toml`
+//!
+//! ```toml
+//! fn_graph = "0.4.0"
+//!
+//! # Integrate with `fn_meta`
+//! fn_graph = { version = "0.4.0", features = ["fn_meta"] }
+//! ```
+//!
 //! # Rationale
 //!
 //! Support there are three tasks, each represented by a function. Each function
