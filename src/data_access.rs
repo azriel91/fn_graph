@@ -5,7 +5,7 @@ pub use self::{r::R, w::W};
 mod r;
 mod w;
 
-/// Data read by this type.
+/// Data accessed by this type.
 pub trait DataAccess {
     /// Returns the [`TypeId`]s of borrowed arguments.
     ///
@@ -32,4 +32,11 @@ where
     fn borrow_muts(&self) -> TypeIds {
         <T as FnMeta>::borrow_muts(self)
     }
+}
+
+/// Borrows data from `Resources`.
+#[cfg(feature = "resman")]
+pub trait DataBorrow<'borrow> {
+    /// Borrows `Self`'s underlying data type from the provided [`Resources`].
+    fn borrow(resources: &'borrow resman::Resources) -> Self;
 }

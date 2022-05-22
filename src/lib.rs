@@ -80,6 +80,14 @@
 //! [`FnRes`]: fn_res::FnFnRes
 //! [`FnMeta`]: fn_res::fn_meta::FnMeta
 
+pub use daggy::{self, WouldCycle};
+
+#[cfg(feature = "resman")]
+pub use resman::{self, Resources};
+
+#[cfg(feature = "fn_meta")]
+pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
+
 pub use crate::{
     data_access::{DataAccess, R, W},
     edge::Edge,
@@ -93,10 +101,8 @@ pub use crate::{
     type_ids::TypeIds,
 };
 
-pub use daggy::{self, WouldCycle};
-
-#[cfg(feature = "fn_meta")]
-pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
+#[cfg(feature = "resman")]
+pub use crate::data_access::DataBorrow;
 
 mod data_access;
 mod edge;
