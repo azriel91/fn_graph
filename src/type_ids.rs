@@ -1,8 +1,8 @@
 use core::any::TypeId;
 
-use arrayvec::ArrayVec;
+use smallvec::SmallVec;
 
 /// Array of [`TypeId`]s.
 ///
-/// Holds a maximum of 8 Type IDs.
-pub type TypeIds = ArrayVec<TypeId, 8>;
+/// Holds up to 8 Type IDs before overflowing onto the heap.
+pub type TypeIds = SmallVec<[TypeId; 8]>;
