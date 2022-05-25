@@ -10,6 +10,18 @@ pub trait DataAccess {
     /// Returns the [`TypeId`]s of borrowed arguments.
     ///
     /// [`TypeId`]: core::any::TypeId
+    fn borrows() -> TypeIds;
+    /// Returns the [`TypeId`]s of mutably borrowed arguments.
+    ///
+    /// [`TypeId`]: core::any::TypeId
+    fn borrow_muts() -> TypeIds;
+}
+
+/// Data accessed by this type.
+pub trait DataAccessDyn {
+    /// Returns the [`TypeId`]s of borrowed arguments.
+    ///
+    /// [`TypeId`]: core::any::TypeId
     fn borrows(&self) -> TypeIds;
     /// Returns the [`TypeId`]s of mutably borrowed arguments.
     ///
@@ -18,19 +30,33 @@ pub trait DataAccess {
 }
 
 #[cfg(feature = "fn_meta")]
-use fn_meta::FnMeta;
+use fn_meta::{FnMeta, FnMetaDyn};
 
 #[cfg(feature = "fn_meta")]
 impl<T> DataAccess for T
 where
     T: FnMeta,
 {
+    fn borrows() -> TypeIds {
+        <T as FnMeta>::borrows()
+    }
+
+    fn borrow_muts() -> TypeIds {
+        <T as FnMeta>::borrow_muts()
+    }
+}
+
+#[cfg(feature = "fn_meta")]
+impl<T> DataAccessDyn for T
+where
+    T: FnMetaDyn,
+{
     fn borrows(&self) -> TypeIds {
-        <T as FnMeta>::borrows(self)
+        <T as FnMetaDyn>::borrows(self)
     }
 
     fn borrow_muts(&self) -> TypeIds {
-        <T as FnMeta>::borrow_muts(self)
+        <T as FnMetaDyn>::borrow_muts(self)
     }
 }
 

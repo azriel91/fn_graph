@@ -2,7 +2,7 @@
 use core::any::TypeId;
 
 #[cfg(not(feature = "fn_meta"))]
-use crate::{DataAccess, TypeIds};
+use crate::{DataAccess, DataAccessDyn, TypeIds};
 
 /// Write access to `T`.
 #[cfg(not(feature = "resman"))]
@@ -14,6 +14,22 @@ pub type W<'write, T> = resman::RefMut<'write, T>;
 
 #[cfg(not(feature = "fn_meta"))]
 impl<'write, T> DataAccess for W<'write, T>
+where
+    T: 'static,
+{
+    fn borrows() -> TypeIds {
+        TypeIds::new()
+    }
+
+    fn borrow_muts() -> TypeIds {
+        let mut type_ids = TypeIds::new();
+        type_ids.push(TypeId::of::<T>());
+        type_ids
+    }
+}
+
+#[cfg(not(feature = "fn_meta"))]
+impl<'read, T> DataAccessDyn for W<'read, T>
 where
     T: 'static,
 {

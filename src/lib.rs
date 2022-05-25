@@ -89,7 +89,7 @@ pub use resman::{self, Resources};
 pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
 
 pub use crate::{
-    data_access::{DataAccess, R, W},
+    data_access::{DataAccess, DataAccessDyn, R, W},
     edge::Edge,
     edge_counts::EdgeCounts,
     edge_id::EdgeId,
