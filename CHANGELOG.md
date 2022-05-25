@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 (2022-05-26)
+
+* Update `fn_meta` to `0.7.0`.
+* Add `resman` integration through the `"resman"` feature.
+
 ## 0.4.0 (2022-05-22)
 
 * Update `fn_meta` to `0.5.0`.

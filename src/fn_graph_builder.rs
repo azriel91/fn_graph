@@ -2,7 +2,7 @@ use std::mem::MaybeUninit;
 
 use daggy::{Dag, WouldCycle};
 
-use crate::{DataAccess, Edge, EdgeId, FnGraph, FnId, FnIdInner};
+use crate::{DataAccessDyn, Edge, EdgeId, FnGraph, FnId, FnIdInner};
 
 use self::{
     data_edge_augmenter::DataEdgeAugmenter, predecessor_count_calc::PredecessorCountCalc,
@@ -22,7 +22,7 @@ pub struct FnGraphBuilder<F> {
 
 impl<F> FnGraphBuilder<F>
 where
-    F: DataAccess,
+    F: DataAccessDyn,
 {
     /// Returns a new `FnGraphBuilder`.
     pub fn new() -> Self {

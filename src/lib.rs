@@ -17,8 +17,10 @@
 //! ```toml
 //! fn_graph = "0.4.0"
 //!
-//! # Integrate with `fn_meta`
+//! # Integrate with `fn_meta` and/or `resman`
 //! fn_graph = { version = "0.4.0", features = ["fn_meta"] }
+//! fn_graph = { version = "0.4.0", features = ["resman"] }
+//! fn_graph = { version = "0.4.0", features = ["fn_meta", "resman"] }
 //! ```
 //!
 //! # Rationale
@@ -80,8 +82,16 @@
 //! [`FnRes`]: fn_res::FnFnRes
 //! [`FnMeta`]: fn_res::fn_meta::FnMeta
 
+pub use daggy::{self, WouldCycle};
+
+#[cfg(feature = "resman")]
+pub use resman::{self, Resources};
+
+#[cfg(feature = "fn_meta")]
+pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
+
 pub use crate::{
-    data_access::{DataAccess, R, W},
+    data_access::{DataAccess, DataAccessDyn, R, W},
     edge::Edge,
     edge_counts::EdgeCounts,
     edge_id::EdgeId,
@@ -93,10 +103,8 @@ pub use crate::{
     type_ids::TypeIds,
 };
 
-pub use daggy::{self, WouldCycle};
-
-#[cfg(feature = "fn_meta")]
-pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
+#[cfg(feature = "resman")]
+pub use crate::data_access::DataBorrow;
 
 mod data_access;
 mod edge;

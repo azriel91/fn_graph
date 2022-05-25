@@ -2,13 +2,13 @@ use std::marker::PhantomData;
 
 use daggy::{petgraph::algo::has_path_connecting, Dag};
 
-use crate::{DataAccess, Edge, FnId, FnIdInner, Rank};
+use crate::{DataAccessDyn, Edge, FnId, FnIdInner, Rank};
 
 pub(super) struct DataEdgeAugmenter<F>(PhantomData<F>);
 
 impl<F> DataEdgeAugmenter<F>
 where
-    F: DataAccess,
+    F: DataAccessDyn,
 {
     /// Adds forward edges between functions with data access dependencies.
     ///

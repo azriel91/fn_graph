@@ -3,6 +3,12 @@
 [fn_meta]
 features = "fn_meta"
 
+[resman]
+features = "resman"
+
+["resman fn_meta"]
+features = "resman fn_meta"
+
 [report]
 out = ["Html", "Xml"]
 output-dir = "target/tarpaulin"

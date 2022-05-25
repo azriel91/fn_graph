@@ -24,8 +24,10 @@ Add the following to `Cargo.toml`
 ```toml
 fn_graph = "0.4.0"
 
-# Integrate with `fn_meta`
+# Integrate with `fn_meta` and/or `resman`
 fn_graph = { version = "0.4.0", features = ["fn_meta"] }
+fn_graph = { version = "0.4.0", features = ["resman"] }
+fn_graph = { version = "0.4.0", features = ["fn_meta", "resman"] }
 ```
 
 # Rationale
