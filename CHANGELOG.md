@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 (2022-06-05)
+
+* Add `Self: Sized` bound to `DataAccess` trait methods for object safety.
+
 ## 0.5.0 (2022-05-26)
 
 * Update `fn_meta` to `0.7.0`.
