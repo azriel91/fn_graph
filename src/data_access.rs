@@ -10,11 +10,16 @@ pub trait DataAccess {
     /// Returns the [`TypeId`]s of borrowed arguments.
     ///
     /// [`TypeId`]: core::any::TypeId
-    fn borrows() -> TypeIds;
+    fn borrows() -> TypeIds
+    where
+        Self: Sized;
+
     /// Returns the [`TypeId`]s of mutably borrowed arguments.
     ///
     /// [`TypeId`]: core::any::TypeId
-    fn borrow_muts() -> TypeIds;
+    fn borrow_muts() -> TypeIds
+    where
+        Self: Sized;
 }
 
 /// Data accessed by this type.
