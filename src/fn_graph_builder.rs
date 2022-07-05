@@ -73,7 +73,7 @@ where
 
         #[allow(clippy::let_and_return)] // for clarity with `unsafe`
         let fn_ids = unsafe {
-            (&*(&MaybeUninit::new(fn_ids) as *const _ as *const MaybeUninit<_>)).assume_init_read()
+            (*(&MaybeUninit::new(fn_ids) as *const _ as *const MaybeUninit<_>)).assume_init_read()
         };
 
         fn_ids
@@ -129,8 +129,7 @@ where
 
         #[allow(clippy::let_and_return)] // for clarity with `unsafe`
         let edge_ids = unsafe {
-            (&*(&MaybeUninit::new(edge_ids) as *const _ as *const MaybeUninit<_>))
-                .assume_init_read()
+            (*(&MaybeUninit::new(edge_ids) as *const _ as *const MaybeUninit<_>)).assume_init_read()
         };
 
         Ok(edge_ids)
