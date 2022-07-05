@@ -69,5 +69,7 @@ where
 #[cfg(feature = "resman")]
 pub trait DataBorrow<'borrow> {
     /// Borrows `Self`'s underlying data type from the provided [`Resources`].
+    ///
+    /// [`Resources`]: resman::Resources
     fn borrow(resources: &'borrow resman::Resources) -> Self;
 }

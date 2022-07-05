@@ -79,8 +79,8 @@
 //! [`resman`]: https://github.com/azriel91/resman
 //! [`shred`]: https://github.com/amethyst/shred
 //!
-//! [`FnRes`]: fn_res::FnFnRes
-//! [`FnMeta`]: fn_res::fn_meta::FnMeta
+//! [`FnMeta`]: https://docs.rs/fn_meta/latest/fn_meta/trait.FnMeta.html
+//! [`FnRes`]: https://docs.rs/resman/latest/resman/trait.FnRes.html
 
 pub use daggy::{self, WouldCycle};
 
