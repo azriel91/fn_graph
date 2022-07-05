@@ -42,6 +42,29 @@ jobs:
           command: fmt
           args: --all -- --check
 
+  docs_and_spell_check:
+    name: Docs and Spell Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      RUSTDOCFLAGS: "-Dwarnings"
+    steps:
+      - name: Checkout Actions Repository
+        uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Check spelling
+        uses: crate-ci/typos@master
+
+      - uses: actions-rs/cargo@v1
+        with:
+          command: doc
+          args: --no-deps --features "resman fn_meta"
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -74,29 +97,18 @@ jobs:
           profile: minimal
           toolchain: nightly
           override: true
+          components: llvm-tools-preview
 
-      - name: tarpaulin Cache
-        id: tarpaulin_cache
-        uses: actions/cache@v2
-        with:
-          path: ~/.cargo/bin/cargo-tarpaulin
-          key: ${{ runner.os }}-cargo-tarpaulin
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@nextest
 
-      - uses: actions-rs/cargo@v1
-        if: steps.tarpaulin_cache.outputs.cache-hit != 'true'
-        with:
-          command: install
-          args: cargo-tarpaulin
-
-      - name: 'Run `cargo-tarpaulin`'
-        uses: actions-rs/cargo@v1
-        with:
-          command: tarpaulin
+      - name: 'Collect coverage'
+        run: ./coverage.sh
 
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v1
         with:
-          file: ./target/tarpaulin/cobertura.xml
+          file: ./target/coverage/lcov.info
 
   build_and_test_linux:
     name: Build and Test (Linux)
@@ -113,7 +125,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --release
+          args: --release --features "resman fn_meta"
 
   build_and_test_windows:
     name: Build and Test (Windows)
@@ -133,4 +145,4 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --release
+          args: --release --features "resman fn_meta"
