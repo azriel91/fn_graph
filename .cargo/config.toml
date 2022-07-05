@@ -1,0 +1,6 @@
+[alias]
+coverage_0 = ["llvm-cov", "nextest", "--no-report", "--output-dir", "./target/coverage", "--features", ""]
+coverage_1 = ["llvm-cov", "nextest", "--no-report", "--output-dir", "./target/coverage", "--features", "fn_meta"]
+coverage_2 = ["llvm-cov", "nextest", "--no-report", "--output-dir", "./target/coverage", "--features", "resman"]
+coverage_3 = ["llvm-cov", "nextest", "--no-report", "--output-dir", "./target/coverage", "--features", "resman fn_meta"]
+coverage_open = 'llvm-cov --no-run --open --output-dir ./target/coverage'

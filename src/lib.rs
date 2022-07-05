@@ -15,12 +15,12 @@
 //! Add the following to `Cargo.toml`
 //!
 //! ```toml
-//! fn_graph = "0.5.1"
+//! fn_graph = "0.5.2"
 //!
 //! # Integrate with `fn_meta` and/or `resman`
-//! fn_graph = { version = "0.5.1", features = ["fn_meta"] }
-//! fn_graph = { version = "0.5.1", features = ["resman"] }
-//! fn_graph = { version = "0.5.1", features = ["fn_meta", "resman"] }
+//! fn_graph = { version = "0.5.2", features = ["fn_meta"] }
+//! fn_graph = { version = "0.5.2", features = ["resman"] }
+//! fn_graph = { version = "0.5.2", features = ["fn_meta", "resman"] }
 //! ```
 //!
 //! # Rationale
@@ -79,8 +79,8 @@
 //! [`resman`]: https://github.com/azriel91/resman
 //! [`shred`]: https://github.com/amethyst/shred
 //!
-//! [`FnRes`]: fn_res::FnFnRes
-//! [`FnMeta`]: fn_res::fn_meta::FnMeta
+//! [`FnMeta`]: https://docs.rs/fn_meta/latest/fn_meta/trait.FnMeta.html
+//! [`FnRes`]: https://docs.rs/resman/latest/resman/trait.FnRes.html
 
 pub use daggy::{self, WouldCycle};
 
