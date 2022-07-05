@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2 (2022-07-06)
+
+* Update dependency versions.
+
 ## 0.5.1 (2022-06-05)
 
 * Add `Self: Sized` bound to `DataAccess` trait methods for object safety.
