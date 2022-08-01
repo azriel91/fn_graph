@@ -1,5 +1,10 @@
 # Changelog
 
+## unreleased
+
+* Implement `DataAccess`, `DataAccessDyn` for `()`.
+* Update dependency versions.
+
 ## 0.5.2 (2022-07-06)
 
 * Update dependency versions.
