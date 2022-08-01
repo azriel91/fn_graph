@@ -1,5 +1,10 @@
 # Changelog
 
+## unreleased
+
+* Implement `DataAccess`, `DataAccessDyn` for `&()`.
+* Update `fn_meta` to `0.7.3`.
+
 ## 0.5.3 (2022-08-02)
 
 * Implement `DataAccess`, `DataAccessDyn` for `()`.
