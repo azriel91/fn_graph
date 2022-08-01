@@ -17,11 +17,11 @@ fn_meta = { version = "0.7.1", optional = true, features = ["fn_meta_ext"] }
 resman = { version = "0.15.0", optional = true, features = ["debug"] }
 futures = { version = "0.3.21", optional = true }
 smallvec = "1.9.0"
-tokio = { version = "1.19.2", features = ["sync"] }
+tokio = { version = "1.20.1", features = ["sync"] }
 
 [dev-dependencies]
 resman = { version = "0.15.0", features = ["debug", "fn_res", "fn_res_mut", "fn_meta"] }
-tokio = { version = "1.19.2", features = ["rt", "sync", "time"] }
+tokio = { version = "1.20.1", features = ["rt", "sync", "time"] }
 
 [features]
 default = ["async"]
