@@ -141,3 +141,32 @@ pub trait DataBorrow<'borrow> {
     /// [`Resources`]: resman::Resources
     fn borrow(resources: &'borrow resman::Resources) -> Self;
 }
+
+#[cfg(test)]
+mod tests {
+    use std::any::TypeId;
+
+    use super::{DataAccess, DataAccessDyn};
+
+    #[test]
+    fn unit() {
+        assert_eq!([] as [TypeId; 0], <() as DataAccess>::borrows().as_slice());
+        assert_eq!(
+            [] as [TypeId; 0],
+            <() as DataAccess>::borrow_muts().as_slice()
+        );
+        assert_eq!([] as [TypeId; 0], ().borrows().as_slice());
+        assert_eq!([] as [TypeId; 0], ().borrow_muts().as_slice());
+
+        assert_eq!([] as [TypeId; 0], <&() as DataAccess>::borrows().as_slice());
+        assert_eq!(
+            [] as [TypeId; 0],
+            <&() as DataAccess>::borrow_muts().as_slice()
+        );
+        assert_eq!([] as [TypeId; 0], DataAccessDyn::borrows(&&()).as_slice());
+        assert_eq!(
+            [] as [TypeId; 0],
+            DataAccessDyn::borrow_muts(&&()).as_slice()
+        );
+    }
+}

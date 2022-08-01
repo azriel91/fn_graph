@@ -54,3 +54,46 @@ where
         resources.borrow::<T>()
     }
 }
+
+#[cfg(all(not(feature = "resman"), not(feature = "fn_meta")))]
+#[cfg(test)]
+mod tests {
+    use std::any::TypeId;
+
+    use super::R;
+    use crate::{DataAccess, DataAccessDyn};
+
+    #[test]
+    fn unit() {
+        assert_eq!(
+            [TypeId::of::<u32>()] as [TypeId; 1],
+            <R<'_, u32> as DataAccess>::borrows().as_slice()
+        );
+        assert_eq!(
+            [] as [TypeId; 0],
+            <R<'_, u32> as DataAccess>::borrow_muts().as_slice()
+        );
+        assert_eq!(
+            [TypeId::of::<u32>()] as [TypeId; 1],
+            R(&1u32).borrows().as_slice()
+        );
+        assert_eq!([] as [TypeId; 0], R(&1u32).borrow_muts().as_slice());
+    }
+}
+
+#[cfg(feature = "resman")]
+#[cfg(test)]
+mod tests {
+    use resman::Resources;
+
+    use super::R;
+    use crate::DataBorrow;
+
+    #[test]
+    fn unit() {
+        let mut resources = Resources::new();
+        resources.insert(1u32);
+
+        assert_eq!(1, *R::<'_, u32>::borrow(&resources));
+    }
+}
