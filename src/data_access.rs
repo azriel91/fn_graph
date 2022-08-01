@@ -68,6 +68,40 @@ impl DataAccessDyn for () {
     }
 }
 
+#[cfg(not(feature = "fn_meta"))]
+impl<'any> DataAccess for &'any () {
+    fn borrows() -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+
+    fn borrow_muts() -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+}
+
+#[cfg(not(feature = "fn_meta"))]
+impl<'any> DataAccessDyn for &'any () {
+    fn borrows(&self) -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+
+    fn borrow_muts(&self) -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+}
+
 #[cfg(feature = "fn_meta")]
 use fn_meta::{FnMeta, FnMetaDyn};
 
@@ -106,4 +140,33 @@ pub trait DataBorrow<'borrow> {
     ///
     /// [`Resources`]: resman::Resources
     fn borrow(resources: &'borrow resman::Resources) -> Self;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::any::TypeId;
+
+    use super::{DataAccess, DataAccessDyn};
+
+    #[test]
+    fn unit() {
+        assert_eq!([] as [TypeId; 0], <() as DataAccess>::borrows().as_slice());
+        assert_eq!(
+            [] as [TypeId; 0],
+            <() as DataAccess>::borrow_muts().as_slice()
+        );
+        assert_eq!([] as [TypeId; 0], ().borrows().as_slice());
+        assert_eq!([] as [TypeId; 0], ().borrow_muts().as_slice());
+
+        assert_eq!([] as [TypeId; 0], <&() as DataAccess>::borrows().as_slice());
+        assert_eq!(
+            [] as [TypeId; 0],
+            <&() as DataAccess>::borrow_muts().as_slice()
+        );
+        assert_eq!([] as [TypeId; 0], DataAccessDyn::borrows(&&()).as_slice());
+        assert_eq!(
+            [] as [TypeId; 0],
+            DataAccessDyn::borrow_muts(&&()).as_slice()
+        );
+    }
 }
