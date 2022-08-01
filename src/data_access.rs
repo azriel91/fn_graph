@@ -68,6 +68,40 @@ impl DataAccessDyn for () {
     }
 }
 
+#[cfg(not(feature = "fn_meta"))]
+impl<'any> DataAccess for &'any () {
+    fn borrows() -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+
+    fn borrow_muts() -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+}
+
+#[cfg(not(feature = "fn_meta"))]
+impl<'any> DataAccessDyn for &'any () {
+    fn borrows(&self) -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+
+    fn borrow_muts(&self) -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+}
+
 #[cfg(feature = "fn_meta")]
 use fn_meta::{FnMeta, FnMetaDyn};
 
