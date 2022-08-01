@@ -34,6 +34,40 @@ pub trait DataAccessDyn {
     fn borrow_muts(&self) -> TypeIds;
 }
 
+#[cfg(not(feature = "fn_meta"))]
+impl DataAccess for () {
+    fn borrows() -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+
+    fn borrow_muts() -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+}
+
+#[cfg(not(feature = "fn_meta"))]
+impl DataAccessDyn for () {
+    fn borrows(&self) -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+
+    fn borrow_muts(&self) -> TypeIds
+    where
+        Self: Sized,
+    {
+        TypeIds::new()
+    }
+}
+
 #[cfg(feature = "fn_meta")]
 use fn_meta::{FnMeta, FnMetaDyn};
 
