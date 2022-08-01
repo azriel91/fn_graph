@@ -15,12 +15,12 @@
 //! Add the following to `Cargo.toml`
 //!
 //! ```toml
-//! fn_graph = "0.5.2"
+//! fn_graph = "0.5.3"
 //!
 //! # Integrate with `fn_meta` and/or `resman`
-//! fn_graph = { version = "0.5.2", features = ["fn_meta"] }
-//! fn_graph = { version = "0.5.2", features = ["resman"] }
-//! fn_graph = { version = "0.5.2", features = ["fn_meta", "resman"] }
+//! fn_graph = { version = "0.5.3", features = ["fn_meta"] }
+//! fn_graph = { version = "0.5.3", features = ["resman"] }
+//! fn_graph = { version = "0.5.3", features = ["fn_meta", "resman"] }
 //! ```
 //!
 //! # Rationale
