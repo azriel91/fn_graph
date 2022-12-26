@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v1
-      - uses: actions-rs/audit-check@v1
+      - uses: actions/checkout@v3
+      - uses: bp3d-actions/audit-check@9c23bd47e5e7b15b824739e0862cb878a52cc211
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -21,17 +21,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v3
+      - # FIXME: Switch back when actions-rs/toolchain#{209,220,222} is merged
+        uses: r3-os/actions-rust-toolchain@a862b6623c178b43a3135516442a5f72fb5c1877
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: nightly
           override: true
 
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --release --features "resman fn_meta"
+      - uses: taiki-e/install-action@nextest
+      - name: 'Build and test'
+        run: cargo nextest run --workspace --all-targets --all-features
 
   build_and_test_windows:
     name: Build and Test (Windows)
@@ -41,17 +41,17 @@ jobs:
       - name: Prepare symlink configuration
         run: git config --global core.symlinks true
 
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v3
+      - # FIXME: Switch back when actions-rs/toolchain#{209,220,222} is merged
+        uses: r3-os/actions-rust-toolchain@a862b6623c178b43a3135516442a5f72fb5c1877
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: nightly
           override: true
 
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --release --features "resman fn_meta"
+      - uses: taiki-e/install-action@nextest
+      - name: 'Build and test'
+        run: cargo nextest run --workspace --all-targets --all-features
 
   crates_io_publish:
     name: Publish (crates.io)
@@ -63,8 +63,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v3
+      - # FIXME: Switch back when actions-rs/toolchain#{209,220,222} is merged
+        uses: r3-os/actions-rust-toolchain@a862b6623c178b43a3135516442a5f72fb5c1877
         with:
           profile: minimal
           toolchain: stable
@@ -72,24 +73,27 @@ jobs:
 
       - name: workspaces Cache
         id: workspaces_cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: ~/.cargo/bin/cargo-workspaces
           key: ${{ runner.os }}-cargo-workspaces
 
-      - uses: actions-rs/cargo@v1
+      - # FIXME: Switch back when actions-rs/cargo#217 gets merged
+        uses: r3-os/actions-rust-cargo@fb222fe18dc90e381546d012f9e3d6f353f0f627
         if: steps.workspaces_cache.outputs.cache-hit != 'true'
         with:
           command: install
           args: cargo-workspaces
 
       - name: cargo login
-        uses: actions-rs/cargo@v1
+        # FIXME: Switch back when actions-rs/cargo#217 gets merged
+        uses: r3-os/actions-rust-cargo@fb222fe18dc90e381546d012f9e3d6f353f0f627
         with:
           command: login
           args: ${{ secrets.CRATES_IO_API_TOKEN }}
 
-      - uses: actions-rs/cargo@v1
+      - # FIXME: Switch back when actions-rs/cargo#217 gets merged
+        uses: r3-os/actions-rust-cargo@fb222fe18dc90e381546d012f9e3d6f353f0f627
         with:
           command: workspaces
           args: >
