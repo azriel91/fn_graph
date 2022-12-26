@@ -146,8 +146,8 @@ jobs:
       - name: 'Build and test'
         run: cargo nextest run --workspace --all-targets
 
-  build_examples_wasm:
-    name: Build examples (WASM)
+  build_wasm:
+    name: Build WASM library
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -165,11 +165,4 @@ jobs:
           version: 'latest'
 
       - name: 'Build examples'
-        run: |
-          for example in $(ls examples)
-          do wasm-pack build \
-            --target web \
-            --out-dir "../../doc/src/examples/pkg" \
-             --release \
-            "examples/${example}"
-          done
+        run: wasm-pack build --target web --release
