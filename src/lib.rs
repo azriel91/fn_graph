@@ -15,12 +15,12 @@
 //! Add the following to `Cargo.toml`
 //!
 //! ```toml
-//! fn_graph = "0.5.4"
+//! fn_graph = "0.6.0"
 //!
 //! # Integrate with `fn_meta` and/or `resman`
-//! fn_graph = { version = "0.5.4", features = ["fn_meta"] }
-//! fn_graph = { version = "0.5.4", features = ["resman"] }
-//! fn_graph = { version = "0.5.4", features = ["fn_meta", "resman"] }
+//! fn_graph = { version = "0.6.0", features = ["fn_meta"] }
+//! fn_graph = { version = "0.6.0", features = ["resman"] }
+//! fn_graph = { version = "0.6.0", features = ["fn_meta", "resman"] }
 //! ```
 //!
 //! # Rationale
@@ -86,6 +86,8 @@ pub use daggy::{self, WouldCycle};
 
 #[cfg(feature = "resman")]
 pub use resman::{self, Resources};
+#[cfg(all(feature = "resman", feature = "fn_res"))]
+pub use resman::{FnRes, IntoFnRes};
 
 #[cfg(feature = "fn_meta")]
 pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
