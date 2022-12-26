@@ -26,6 +26,7 @@ tokio = { version = "1.20.1", features = ["rt", "sync", "time"] }
 [features]
 default = ["async"]
 async = ["futures"]
+fn_res = ["resman?/fn_res"]
 
 [[example]]
 name = "simple"

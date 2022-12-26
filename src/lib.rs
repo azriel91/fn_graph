@@ -86,6 +86,8 @@ pub use daggy::{self, WouldCycle};
 
 #[cfg(feature = "resman")]
 pub use resman::{self, Resources};
+#[cfg(all(feature = "resman", feature = "fn_res"))]
+pub use resman::{FnRes, IntoFnRes};
 
 #[cfg(feature = "fn_meta")]
 pub use fn_meta::{FnMeta, FnMetaExt, FnMetadata, FnMetadataExt};
