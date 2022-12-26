@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 (2022-12-26)
+
+* Update dependency versions.
+
 ## 0.5.4 (2022-08-02)
 
 * Implement `DataAccess`, `DataAccessDyn` for `&()`.
