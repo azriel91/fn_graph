@@ -305,7 +305,7 @@ impl<F> FnGraph<F> {
     ) where
         FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, false)
+        self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Forward)
             .await
     }
 
@@ -328,7 +328,7 @@ impl<F> FnGraph<F> {
     ) where
         FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, true)
+        self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Reverse)
             .await
     }
 
@@ -338,17 +338,16 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-        reverse: bool,
+        iter_direction: IterDirection,
     ) where
         FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
     {
-        let (graph_structure, predecessor_counts) = if reverse {
-            (
+        let (graph_structure, predecessor_counts) = match iter_direction {
+            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            IterDirection::Reverse => (
                 &self.graph_structure_rev,
                 self.edge_counts.outgoing().to_vec(),
-            )
-        } else {
-            (&self.graph_structure, self.edge_counts.incoming().to_vec())
+            ),
         };
         let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
@@ -576,6 +575,12 @@ impl<F> DerefMut for FnGraph<F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IterDirection {
+    Forward,
+    Reverse,
 }
 
 #[cfg(feature = "fn_meta")]
