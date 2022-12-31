@@ -1392,7 +1392,6 @@ mod tests {
                         async move {
                             let _ = fut.await;
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1428,7 +1427,6 @@ mod tests {
                         async move {
                             let _ = fut.await;
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1466,7 +1464,6 @@ mod tests {
                             let _ = fut.await;
                             Result::<_, TestError>::Ok(())
                         }
-                        .boxed()
                     }),
                 )
                 .await
@@ -1508,7 +1505,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1547,7 +1543,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1589,7 +1584,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1633,7 +1627,6 @@ mod tests {
                             let _ = fut.await;
                             Result::<_, TestError>::Ok(())
                         }
-                        .boxed()
                     }),
                 )
                 .await
@@ -1675,7 +1668,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1713,7 +1705,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1755,7 +1746,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1795,7 +1785,6 @@ mod tests {
                         async move {
                             let _ = fut.await;
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1830,7 +1819,6 @@ mod tests {
                         async move {
                             let _ = fut.await;
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1867,7 +1855,6 @@ mod tests {
                             let _ = fut.await;
                             Result::<_, TestError>::Ok(())
                         }
-                        .boxed()
                     }),
                 )
                 .await
@@ -1908,7 +1895,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1947,7 +1933,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -1989,7 +1974,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -2033,7 +2017,6 @@ mod tests {
                             let _ = fut.await;
                             Result::<_, TestError>::Ok(())
                         }
-                        .boxed()
                     }),
                 )
                 .await
@@ -2074,7 +2057,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -2112,7 +2094,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
@@ -2154,7 +2135,6 @@ mod tests {
                                 _ => Ok(()),
                             }
                         }
-                        .boxed()
                     }),
                 )
                 .await;
