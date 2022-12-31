@@ -1,5 +1,10 @@
 # Changelog
 
+## unreleased
+
+* Add separate `*for_each_concurrent*` methods for immutable fn refs.
+* No longer require future to be boxed for `*for_each_concurrent*` methods.
+
 ## 0.7.0 (2022-12-31)
 
 * Implement `FnGraph::try_for_each_concurrent`.
