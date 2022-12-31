@@ -300,13 +300,14 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent<FnForEach, Fut>(
-        &self,
+    pub async fn for_each_concurrent<'f, FnForEach, Fut>(
+        &'f self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
     ) where
-        FnForEach: Fn(&F) -> Fut,
-        Fut: Future<Output = ()>,
+        FnForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = ()> + 'f,
+        F: 'f,
     {
         self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Forward)
             .await
@@ -324,13 +325,14 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent_rev<FnForEach, Fut>(
-        &self,
+    pub async fn for_each_concurrent_rev<'f, FnForEach, Fut>(
+        &'f self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
     ) where
-        FnForEach: Fn(&F) -> Fut,
-        Fut: Future<Output = ()>,
+        FnForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = ()> + 'f,
+        F: 'f,
     {
         self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Reverse)
             .await
@@ -338,14 +340,15 @@ impl<F> FnGraph<F> {
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn for_each_concurrent_internal<FnForEach, Fut>(
-        &self,
+    async fn for_each_concurrent_internal<'f, FnForEach, Fut>(
+        &'f self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
         iter_direction: IterDirection,
     ) where
-        FnForEach: Fn(&F) -> Fut,
-        Fut: Future<Output = ()>,
+        FnForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = ()> + 'f,
+        F: 'f,
     {
         let (graph_structure, predecessor_counts) = match iter_direction {
             IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
@@ -585,15 +588,15 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent<E, FnTryForEach, Fut>(
-        &self,
+    pub async fn try_for_each_concurrent<'f, E, FnTryForEach, Fut>(
+        &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
-        FnTryForEach: Fn(&F) -> Fut,
-        Fut: Future<Output = Result<(), E>>,
+        FnTryForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = Result<(), E>> + 'f,
     {
         self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Forward)
             .await
@@ -615,15 +618,15 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_rev<E, FnTryForEach, Fut>(
-        &self,
+    pub async fn try_for_each_concurrent_rev<'f, E, FnTryForEach, Fut>(
+        &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
-        FnTryForEach: Fn(&F) -> Fut,
-        Fut: Future<Output = Result<(), E>>,
+        FnTryForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = Result<(), E>> + 'f,
     {
         self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Reverse)
             .await
@@ -631,16 +634,16 @@ impl<F> FnGraph<F> {
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn try_for_each_concurrent_internal<E, FnTryForEach, Fut>(
-        &self,
+    async fn try_for_each_concurrent_internal<'f, E, FnTryForEach, Fut>(
+        &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
         iter_direction: IterDirection,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
-        FnTryForEach: Fn(&F) -> Fut,
-        Fut: Future<Output = Result<(), E>>,
+        FnTryForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = Result<(), E>> + 'f,
     {
         let (graph_structure, predecessor_counts) = match iter_direction {
             IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
