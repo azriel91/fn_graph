@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.8.0 (2023-01-01)
 
 * Add separate `*for_each_concurrent*` methods for immutable fn refs.
 * No longer require future to be boxed for `*for_each_concurrent*` methods.
