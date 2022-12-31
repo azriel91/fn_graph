@@ -982,7 +982,7 @@ mod tests {
                 let resources = &resources;
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(220),
+                    Duration::from_millis(255),
                     fn_graph
                         .stream()
                         .for_each_concurrent(None, |f| async move { f.call(resources).await }),
@@ -1014,7 +1014,7 @@ mod tests {
                 let resources = &resources;
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(220),
+                    Duration::from_millis(255),
                     fn_graph
                         .stream_rev()
                         .for_each_concurrent(None, |f| async move { f.call(resources).await }),
@@ -1044,7 +1044,7 @@ mod tests {
                 resources.insert(0u16);
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(320),
+                    Duration::from_millis(385), // On Windows the duration can be much higher
                     fn_graph.fold_async(resources, |resources, f| {
                         Box::pin(async move {
                             f.call_mut(&resources).await;
@@ -1077,7 +1077,7 @@ mod tests {
                 resources.insert(0u16);
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(320),
+                    Duration::from_millis(385), // On Windows the duration can be much higher
                     fn_graph.fold_rev_async(resources, |resources, f| {
                         Box::pin(async move {
                             f.call_mut(&resources).await;
@@ -1111,7 +1111,7 @@ mod tests {
                 let resources = &resources;
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(220),
+                    Duration::from_millis(255),
                     fn_graph.for_each_concurrent(None, |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -1146,7 +1146,7 @@ mod tests {
                 let resources = &resources;
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(220),
+                    Duration::from_millis(255),
                     fn_graph.for_each_concurrent_rev(None, |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -1182,7 +1182,7 @@ mod tests {
 
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(220),
+                    Duration::from_millis(255),
                     fn_graph.try_for_each_concurrent(None, |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -1348,7 +1348,7 @@ mod tests {
 
                 test_timeout(
                     Duration::from_millis(200),
-                    Duration::from_millis(220),
+                    Duration::from_millis(255),
                     fn_graph.try_for_each_concurrent_rev(None, |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -1425,7 +1425,7 @@ mod tests {
 
                 let result = test_timeout(
                     Duration::from_millis(150),
-                    Duration::from_millis(170),
+                    Duration::from_millis(190),
                     fn_graph.try_for_each_concurrent_rev(None, |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -1466,7 +1466,7 @@ mod tests {
 
                 let result = test_timeout(
                     Duration::from_millis(150),
-                    Duration::from_millis(170),
+                    Duration::from_millis(190),
                     fn_graph.try_for_each_concurrent_rev(None, |f| {
                         let fut = f.call_mut(resources);
                         async move {
