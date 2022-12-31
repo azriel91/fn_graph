@@ -481,6 +481,35 @@ impl<F> FnGraph<F> {
             .await
     }
 
+    /// Runs the provided logic over the functions concurrently in reverse
+    /// topological order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned. The return
+    /// value is a `Vec<E>` as it is possible for multiple tasks to return
+    /// errors.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn try_for_each_concurrent_rev<E, FnTryForEach>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+    ) -> Result<(), Vec<E>>
+    where
+        E: Debug,
+        FnTryForEach: Fn(&mut F) -> BoxFuture<'_, Result<(), E>>,
+    {
+        self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Reverse)
+            .await
+    }
+
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
     async fn try_for_each_concurrent_internal<E, FnTryForEach>(
@@ -1297,6 +1326,169 @@ mod tests {
                 assert_eq!("a", seq_rx.try_recv().unwrap());
                 assert_eq!("c", seq_rx.try_recv().unwrap());
                 assert_eq!("b", seq_rx.try_recv().unwrap());
+                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+                Ok(())
+            })
+        }
+
+        #[test]
+        fn try_for_each_concurrent_rev_runs_fns_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()?;
+            rt.block_on(async {
+                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                let resources = &resources;
+
+                test_timeout(
+                    Duration::from_millis(200),
+                    Duration::from_millis(220),
+                    fn_graph.try_for_each_concurrent_rev(None, |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            let _ = fut.await;
+                            Result::<_, TestError>::Ok(())
+                        }
+                        .boxed()
+                    }),
+                )
+                .await
+                .unwrap();
+
+                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                    .collect::<Vec<&'static str>>()
+                    .await;
+
+                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+
+                Ok(())
+            })
+        }
+
+        #[test]
+        fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()?;
+            rt.block_on(async {
+                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                let resources = &resources;
+
+                let result = test_timeout(
+                    Duration::from_millis(50),
+                    Duration::from_millis(70),
+                    fn_graph.try_for_each_concurrent_rev(None, |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "e" => Err(TestError("e")),
+                                _ => Ok(()),
+                            }
+                        }
+                        .boxed()
+                    }),
+                )
+                .await;
+
+                assert_eq!([TestError("e")], result.unwrap_err().as_slice());
+                assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+                Ok(())
+            })
+        }
+
+        #[test]
+        fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()?;
+            rt.block_on(async {
+                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                let resources = &resources;
+
+                let result = test_timeout(
+                    Duration::from_millis(150),
+                    Duration::from_millis(170),
+                    fn_graph.try_for_each_concurrent_rev(None, |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => Err(TestError("b")),
+                                _ => Ok(()),
+                            }
+                        }
+                        .boxed()
+                    }),
+                )
+                .await;
+
+                assert_eq!([TestError("b")], result.unwrap_err().as_slice());
+                assert_eq!("e", seq_rx.try_recv().unwrap());
+                assert_eq!("d", seq_rx.try_recv().unwrap());
+                assert_eq!("b", seq_rx.try_recv().unwrap());
+                assert_eq!("c", seq_rx.try_recv().unwrap());
+                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+                Ok(())
+            })
+        }
+
+        #[test]
+        fn try_for_each_concurrent_rev_gracefully_ends_when_multiple_functions_return_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let rt = runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()?;
+            rt.block_on(async {
+                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+                let mut resources = Resources::new();
+                resources.insert(0u8);
+                resources.insert(0u16);
+                let resources = &resources;
+
+                let result = test_timeout(
+                    Duration::from_millis(150),
+                    Duration::from_millis(170),
+                    fn_graph.try_for_each_concurrent_rev(None, |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => Err(TestError("b")),
+                                "c" => Err(TestError("c")),
+                                _ => Ok(()),
+                            }
+                        }
+                        .boxed()
+                    }),
+                )
+                .await;
+
+                assert_eq!(
+                    [TestError("b"), TestError("c")],
+                    result.unwrap_err().as_slice()
+                );
+                assert_eq!("e", seq_rx.try_recv().unwrap());
+                assert_eq!("d", seq_rx.try_recv().unwrap());
+                assert_eq!("b", seq_rx.try_recv().unwrap());
+                assert_eq!("c", seq_rx.try_recv().unwrap());
                 assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
                 Ok(())
