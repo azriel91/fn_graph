@@ -16,7 +16,7 @@ use daggy::Walker;
 #[cfg(feature = "async")]
 use futures::{
     future::{Future, LocalBoxFuture},
-    stream::{self, Stream, StreamExt, TryStreamExt},
+    stream::{self, Stream, StreamExt},
     task::Poll,
 };
 #[cfg(feature = "async")]
@@ -347,19 +347,60 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        let fn_for_each = &fn_for_each;
-        match iter_direction {
-            IterDirection::Forward => {
-                self.stream()
-                    .for_each_concurrent(limit, |r#fn| fn_for_each(&r#fn))
-                    .await
-            }
-            IterDirection::Reverse => {
-                self.stream_rev()
-                    .for_each_concurrent(limit, |r#fn| fn_for_each(&r#fn))
-                    .await
-            }
+        let (graph_structure, predecessor_counts) = match iter_direction {
+            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            IterDirection::Reverse => (
+                &self.graph_structure_rev,
+                self.edge_counts.outgoing().to_vec(),
+            ),
         };
+        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
+        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+
+        // Preload the channel with all of the functions that have no predecessors
+        Topo::new(graph_structure)
+            .iter(graph_structure)
+            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+            .expect("Failed to preload function with no predecessors.");
+
+        let queuer =
+            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+
+        let fn_done_tx = RwLock::new(Some(fn_done_tx));
+        let fn_done_tx = &fn_done_tx;
+        let fn_for_each = &fn_for_each;
+        let fns_remaining = graph_structure.node_count();
+        let fns_remaining = RwLock::new(fns_remaining);
+        let fns_remaining = &fns_remaining;
+        let fn_refs = &self.graph;
+        let scheduler = async move {
+            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .for_each_concurrent(limit, |fn_id| async move {
+                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                    fn_for_each(r#fn).await;
+                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
+                        fn_done_tx
+                            .send(fn_id)
+                            .await
+                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
+                    }
+
+                    // Close `fn_done_rx` when all functions have been executed,
+                    let fns_remaining_val = {
+                        let mut fns_remaining_ref = fns_remaining.write().await;
+                        *fns_remaining_ref -= 1;
+                        *fns_remaining_ref
+                    };
+                    if fns_remaining_val == 0 {
+                        fn_done_tx.write().await.take();
+                    }
+                })
+                .await;
+        };
+
+        futures::join!(queuer, scheduler);
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -601,22 +642,85 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
+        let (graph_structure, predecessor_counts) = match iter_direction {
+            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            IterDirection::Reverse => (
+                &self.graph_structure_rev,
+                self.edge_counts.outgoing().to_vec(),
+            ),
+        };
+        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
+        let (result_tx, mut result_rx) = mpsc::channel(channel_capacity);
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
+        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+
+        // Preload the channel with all of the functions that have no predecessors
+        Topo::new(graph_structure)
+            .iter(graph_structure)
+            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+            .expect("Failed to preload function with no predecessors.");
+
+        let queuer =
+            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+
+        let fn_done_tx = RwLock::new(Some(fn_done_tx));
+        let fn_done_tx = &fn_done_tx;
         let fn_try_for_each = &fn_try_for_each;
-        match iter_direction {
-            IterDirection::Forward => {
-                self.stream()
-                    .map(Result::<_, E>::Ok)
-                    .try_for_each_concurrent(limit, |r#fn| fn_try_for_each(&r#fn))
-                    .await
-            }
-            IterDirection::Reverse => {
-                self.stream_rev()
-                    .map(Result::<_, E>::Ok)
-                    .try_for_each_concurrent(limit, |r#fn| fn_try_for_each(&r#fn))
-                    .await
-            }
+        let fns_remaining = graph_structure.node_count();
+        let fns_remaining = RwLock::new(fns_remaining);
+        let fns_remaining = &fns_remaining;
+        let fn_refs = &self.graph;
+        let scheduler = async move {
+            let result_tx_ref = &result_tx;
+
+            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .for_each_concurrent(limit, |fn_id| async move {
+                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                    if let Err(e) = fn_try_for_each(r#fn).await {
+                        result_tx_ref
+                            .send(e)
+                            .await
+                            .expect("Scheduler failed to send Err result in `result_tx`.");
+
+                        // Close `fn_done_rx`, which means `fn_ready_queuer` should return
+                        // `Poll::Ready(None)`.
+                        fn_done_tx.write().await.take();
+                    };
+
+                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
+                        fn_done_tx
+                            .send(fn_id)
+                            .await
+                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
+                    }
+
+                    // Close `fn_done_rx` when all functions have been executed,
+                    let fns_remaining_val = {
+                        let mut fns_remaining_ref = fns_remaining.write().await;
+                        *fns_remaining_ref -= 1;
+                        *fns_remaining_ref
+                    };
+                    if fns_remaining_val == 0 {
+                        fn_done_tx.write().await.take();
+                    }
+                })
+                .await;
+
+            drop(result_tx);
+        };
+
+        futures::join!(queuer, scheduler);
+
+        let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
+            .collect::<Vec<E>>()
+            .await;
+
+        if results.is_empty() {
+            Ok(())
+        } else {
+            Err(results)
         }
-        .map_err(|error| vec![error])
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -1293,6 +1397,7 @@ mod tests {
                 )
                 .await;
 
+                seq_rx.close();
                 let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
                     .collect::<Vec<&'static str>>()
                     .await;
@@ -1328,6 +1433,7 @@ mod tests {
                 )
                 .await;
 
+                seq_rx.close();
                 let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
                     .collect::<Vec<&'static str>>()
                     .await;
@@ -1338,8 +1444,8 @@ mod tests {
         }
 
         #[test]
-        fn try_for_each_concurrent_runs_fns_concurrently_mut()
-        -> Result<(), Box<dyn std::error::Error>> {
+        fn try_for_each_concurrent_runs_fns_concurrently() -> Result<(), Box<dyn std::error::Error>>
+        {
             let rt = runtime::Builder::new_current_thread()
                 .enable_time()
                 .build()?;
@@ -1366,6 +1472,7 @@ mod tests {
                 .await
                 .unwrap();
 
+                seq_rx.close();
                 let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
                     .collect::<Vec<&'static str>>()
                     .await;
@@ -1504,7 +1611,7 @@ mod tests {
         }
 
         #[test]
-        fn try_for_each_concurrent_rev_runs_fns_concurrently_mut()
+        fn try_for_each_concurrent_rev_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let rt = runtime::Builder::new_current_thread()
                 .enable_time()
@@ -1532,6 +1639,7 @@ mod tests {
                 .await
                 .unwrap();
 
+                seq_rx.close();
                 let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
                     .collect::<Vec<&'static str>>()
                     .await;
