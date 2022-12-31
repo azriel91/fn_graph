@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.7.0 (2022-12-31)
 
 * Implement `FnGraph::try_for_each_concurrent`.
 * Implement `FnGraph::try_for_each_concurrent_rev`.
