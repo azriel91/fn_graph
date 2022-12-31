@@ -426,7 +426,7 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_internal_mut(limit, fn_for_each, IterDirection::Forward)
+        self.for_each_concurrent_mut_internal(limit, fn_for_each, IterDirection::Forward)
             .await
     }
 
@@ -450,13 +450,13 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_internal_mut(limit, fn_for_each, IterDirection::Reverse)
+        self.for_each_concurrent_mut_internal(limit, fn_for_each, IterDirection::Reverse)
             .await
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn for_each_concurrent_internal_mut<FnForEach, Fut>(
+    async fn for_each_concurrent_mut_internal<FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
@@ -752,7 +752,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_internal_mut(limit, fn_try_for_each, IterDirection::Forward)
+        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, IterDirection::Forward)
             .await
     }
 
@@ -782,13 +782,13 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_internal_mut(limit, fn_try_for_each, IterDirection::Reverse)
+        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, IterDirection::Reverse)
             .await
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn try_for_each_concurrent_internal_mut<E, FnTryForEach, Fut>(
+    async fn try_for_each_concurrent_mut_internal<E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
