@@ -14,11 +14,10 @@ use crate::{Edge, EdgeCounts, FnId, FnIdInner, Rank};
 #[cfg(feature = "async")]
 use daggy::Walker;
 #[cfg(feature = "async")]
-use futures::task::Poll;
-#[cfg(feature = "async")]
 use futures::{
-    future::{BoxFuture, LocalBoxFuture},
+    future::{Future, LocalBoxFuture},
     stream::{self, Stream, StreamExt},
+    task::Poll,
 };
 #[cfg(feature = "async")]
 use tokio::sync::{
@@ -200,7 +199,7 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async<'f, Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    pub async fn fold_async<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -212,7 +211,7 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_rev_async<'f, Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    pub async fn fold_rev_async<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -220,7 +219,7 @@ impl<F> FnGraph<F> {
     }
 
     #[cfg(feature = "async")]
-    async fn fold_async_internal<'f, Seed, FnFold>(
+    async fn fold_async_internal<Seed, FnFold>(
         &mut self,
         seed: Seed,
         fn_fold: FnFold,
@@ -301,12 +300,13 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent<FnForEach>(
-        &mut self,
+    pub async fn for_each_concurrent<FnForEach, Fut>(
+        &self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
     ) where
-        FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
+        FnForEach: Fn(&F) -> Fut,
+        Fut: Future<Output = ()>,
     {
         self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Forward)
             .await
@@ -324,12 +324,13 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent_rev<FnForEach>(
-        &mut self,
+    pub async fn for_each_concurrent_rev<FnForEach, Fut>(
+        &self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
     ) where
-        FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
+        FnForEach: Fn(&F) -> Fut,
+        Fut: Future<Output = ()>,
     {
         self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Reverse)
             .await
@@ -337,13 +338,129 @@ impl<F> FnGraph<F> {
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn for_each_concurrent_internal<FnForEach>(
+    async fn for_each_concurrent_internal<FnForEach, Fut>(
+        &self,
+        limit: impl Into<Option<usize>>,
+        fn_for_each: FnForEach,
+        iter_direction: IterDirection,
+    ) where
+        FnForEach: Fn(&F) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let (graph_structure, predecessor_counts) = match iter_direction {
+            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            IterDirection::Reverse => (
+                &self.graph_structure_rev,
+                self.edge_counts.outgoing().to_vec(),
+            ),
+        };
+        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
+        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+
+        // Preload the channel with all of the functions that have no predecessors
+        Topo::new(graph_structure)
+            .iter(graph_structure)
+            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+            .expect("Failed to preload function with no predecessors.");
+
+        let queuer =
+            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+
+        let fn_done_tx = RwLock::new(Some(fn_done_tx));
+        let fn_done_tx = &fn_done_tx;
+        let fn_for_each = &fn_for_each;
+        let fns_remaining = graph_structure.node_count();
+        let fns_remaining = RwLock::new(fns_remaining);
+        let fns_remaining = &fns_remaining;
+        let fn_refs = &self.graph;
+        let scheduler = async move {
+            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .for_each_concurrent(limit, |fn_id| async move {
+                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                    fn_for_each(&r#fn).await;
+                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
+                        fn_done_tx
+                            .send(fn_id)
+                            .await
+                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
+                    }
+
+                    // Close `fn_done_rx` when all functions have been executed,
+                    let fns_remaining_val = {
+                        let mut fns_remaining_ref = fns_remaining.write().await;
+                        *fns_remaining_ref -= 1;
+                        *fns_remaining_ref
+                    };
+                    if fns_remaining_val == 0 {
+                        fn_done_tx.write().await.take();
+                    }
+                })
+                .await;
+        };
+
+        futures::join!(queuer, scheduler);
+    }
+
+    /// Runs the provided logic over the functions concurrently in topological
+    /// order.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn for_each_concurrent_mut<FnForEach, Fut>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_for_each: FnForEach,
+    ) where
+        FnForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        self.for_each_concurrent_internal_mut(limit, fn_for_each, IterDirection::Forward)
+            .await
+    }
+
+    /// Runs the provided logic over the functions concurrently in reverse
+    /// topological order.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn for_each_concurrent_mut_rev<FnForEach, Fut>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_for_each: FnForEach,
+    ) where
+        FnForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        self.for_each_concurrent_internal_mut(limit, fn_for_each, IterDirection::Reverse)
+            .await
+    }
+
+    // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
+    #[cfg(feature = "async")]
+    async fn for_each_concurrent_internal_mut<FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
         iter_direction: IterDirection,
     ) where
-        FnForEach: Fn(&mut F) -> BoxFuture<'_, ()>,
+        FnForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = ()>,
     {
         let (graph_structure, predecessor_counts) = match iter_direction {
             IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
@@ -468,14 +585,15 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent<E, FnTryForEach>(
-        &mut self,
+    pub async fn try_for_each_concurrent<E, FnTryForEach, Fut>(
+        &self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
-        FnTryForEach: Fn(&mut F) -> BoxFuture<'_, Result<(), E>>,
+        FnTryForEach: Fn(&F) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
     {
         self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Forward)
             .await
@@ -497,14 +615,15 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_rev<E, FnTryForEach>(
-        &mut self,
+    pub async fn try_for_each_concurrent_rev<E, FnTryForEach, Fut>(
+        &self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
-        FnTryForEach: Fn(&mut F) -> BoxFuture<'_, Result<(), E>>,
+        FnTryForEach: Fn(&F) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
     {
         self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Reverse)
             .await
@@ -512,7 +631,161 @@ impl<F> FnGraph<F> {
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn try_for_each_concurrent_internal<E, FnTryForEach>(
+    async fn try_for_each_concurrent_internal<E, FnTryForEach, Fut>(
+        &self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+        iter_direction: IterDirection,
+    ) -> Result<(), Vec<E>>
+    where
+        E: Debug,
+        FnTryForEach: Fn(&F) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
+    {
+        let (graph_structure, predecessor_counts) = match iter_direction {
+            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            IterDirection::Reverse => (
+                &self.graph_structure_rev,
+                self.edge_counts.outgoing().to_vec(),
+            ),
+        };
+        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
+        let (result_tx, mut result_rx) = mpsc::channel(channel_capacity);
+        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
+        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+
+        // Preload the channel with all of the functions that have no predecessors
+        Topo::new(graph_structure)
+            .iter(graph_structure)
+            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+            .expect("Failed to preload function with no predecessors.");
+
+        let queuer =
+            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+
+        let fn_done_tx = RwLock::new(Some(fn_done_tx));
+        let fn_done_tx = &fn_done_tx;
+        let fn_try_for_each = &fn_try_for_each;
+        let fns_remaining = graph_structure.node_count();
+        let fns_remaining = RwLock::new(fns_remaining);
+        let fns_remaining = &fns_remaining;
+        let fn_refs = &self.graph;
+        let scheduler = async move {
+            let result_tx_ref = &result_tx;
+
+            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .for_each_concurrent(limit, |fn_id| async move {
+                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                    if let Err(e) = fn_try_for_each(&r#fn).await {
+                        result_tx_ref
+                            .send(e)
+                            .await
+                            .expect("Scheduler failed to send Err result in `result_tx`.");
+
+                        // Close `fn_done_rx`, which means `fn_ready_queuer` should return
+                        // `Poll::Ready(None)`.
+                        fn_done_tx.write().await.take();
+                    };
+
+                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
+                        fn_done_tx
+                            .send(fn_id)
+                            .await
+                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
+                    }
+
+                    // Close `fn_done_rx` when all functions have been executed,
+                    let fns_remaining_val = {
+                        let mut fns_remaining_ref = fns_remaining.write().await;
+                        *fns_remaining_ref -= 1;
+                        *fns_remaining_ref
+                    };
+                    if fns_remaining_val == 0 {
+                        fn_done_tx.write().await.take();
+                    }
+                })
+                .await;
+
+            drop(result_tx);
+        };
+
+        futures::join!(queuer, scheduler);
+
+        let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
+            .collect::<Vec<E>>()
+            .await;
+
+        if results.is_empty() {
+            Ok(())
+        } else {
+            Err(results)
+        }
+    }
+
+    /// Runs the provided logic over the functions concurrently in topological
+    /// order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned. The return
+    /// value is a `Vec<E>` as it is possible for multiple tasks to return
+    /// errors.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn try_for_each_concurrent_mut<E, FnTryForEach, Fut>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+    ) -> Result<(), Vec<E>>
+    where
+        E: Debug,
+        FnTryForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
+    {
+        self.try_for_each_concurrent_internal_mut(limit, fn_try_for_each, IterDirection::Forward)
+            .await
+    }
+
+    /// Runs the provided logic over the functions concurrently in reverse
+    /// topological order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned. The return
+    /// value is a `Vec<E>` as it is possible for multiple tasks to return
+    /// errors.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn try_for_each_concurrent_mut_rev<E, FnTryForEach, Fut>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+    ) -> Result<(), Vec<E>>
+    where
+        E: Debug,
+        FnTryForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
+    {
+        self.try_for_each_concurrent_internal_mut(limit, fn_try_for_each, IterDirection::Reverse)
+            .await
+    }
+
+    // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
+    #[cfg(feature = "async")]
+    async fn try_for_each_concurrent_internal_mut<E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
@@ -520,7 +793,8 @@ impl<F> FnGraph<F> {
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
-        FnTryForEach: Fn(&mut F) -> BoxFuture<'_, Result<(), E>>,
+        FnTryForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
     {
         let (graph_structure, predecessor_counts) = match iter_direction {
             IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
