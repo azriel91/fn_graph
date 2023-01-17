@@ -1,5 +1,9 @@
 # Changelog
 
+## unreleased
+
+* Fixed streaming not returning when graph is empty.
+
 ## 0.8.0 (2023-01-01)
 
 * Add separate `*for_each_concurrent*` methods for immutable fn refs.
