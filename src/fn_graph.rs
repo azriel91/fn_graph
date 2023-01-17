@@ -5,14 +5,12 @@ use std::{
 
 use daggy::{
     petgraph::{graph::NodeReferences, visit::Topo},
-    Dag, NodeWeightsMut,
+    Dag, NodeWeightsMut, Walker,
 };
 use fixedbitset::FixedBitSet;
 
-use crate::{Edge, EdgeCounts, FnId, FnIdInner, Rank};
+use crate::{Edge, FnId, FnIdInner, Rank};
 
-#[cfg(feature = "async")]
-use daggy::Walker;
 #[cfg(feature = "async")]
 use futures::{
     future::{Future, LocalBoxFuture},
@@ -26,7 +24,7 @@ use tokio::sync::{
 };
 
 #[cfg(feature = "async")]
-use crate::FnRef;
+use crate::{EdgeCounts, FnRef};
 
 /// Directed acyclic graph of functions.
 ///
@@ -47,6 +45,7 @@ pub struct FnGraph<F> {
     /// remove from the graph. So we don't need to use a `HashMap` here.
     pub(crate) ranks: Vec<Rank>,
     /// Number of incoming and outgoing edges of each function.
+    #[cfg(feature = "async")]
     pub(crate) edge_counts: EdgeCounts,
 }
 
@@ -547,6 +546,7 @@ impl<F> FnGraph<F> {
 
     /// Sends IDs of function whose predecessors have been executed to
     /// `fn_ready_tx`.
+    #[cfg(feature = "async")]
     async fn fn_ready_queuer(
         graph_structure: &Dag<(), Edge, FnIdInner>,
         predecessor_counts: Vec<usize>,
@@ -1018,6 +1018,7 @@ impl<F> Default for FnGraph<F> {
             graph_structure: Dag::new(),
             graph_structure_rev: Dag::new(),
             ranks: Vec::new(),
+            #[cfg(feature = "async")]
             edge_counts: EdgeCounts::default(),
         }
     }
@@ -1039,6 +1040,7 @@ impl<F> DerefMut for FnGraph<F> {
     }
 }
 
+#[cfg(feature = "async")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IterDirection {
     Forward,

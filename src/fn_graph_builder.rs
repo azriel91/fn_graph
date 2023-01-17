@@ -4,12 +4,12 @@ use daggy::{Dag, WouldCycle};
 
 use crate::{DataAccessDyn, Edge, EdgeId, FnGraph, FnId, FnIdInner};
 
-use self::{
-    data_edge_augmenter::DataEdgeAugmenter, predecessor_count_calc::PredecessorCountCalc,
-    rank_calc::RankCalc,
-};
+#[cfg(feature = "async")]
+use self::predecessor_count_calc::PredecessorCountCalc;
+use self::{data_edge_augmenter::DataEdgeAugmenter, rank_calc::RankCalc};
 
 mod data_edge_augmenter;
+#[cfg(feature = "async")]
 mod predecessor_count_calc;
 mod rank_calc;
 
@@ -140,6 +140,7 @@ where
         let Self { mut graph } = self;
         let ranks = RankCalc::calc(&graph);
         DataEdgeAugmenter::augment(&mut graph, &ranks);
+        #[cfg(feature = "async")]
         let edge_counts = PredecessorCountCalc::calc(&graph);
 
         let mut graph_structure = Dag::<(), Edge, FnIdInner>::new();
@@ -166,6 +167,7 @@ where
             graph_structure,
             graph_structure_rev,
             ranks,
+            #[cfg(feature = "async")]
             edge_counts,
         }
     }
