@@ -21,7 +21,7 @@ mod tests {
     fn clone() {
         let edge = Edge::Logic;
 
-        assert_eq!(Edge::Logic, (&edge).clone());
+        assert_eq!(Edge::Logic, edge.clone());
     }
 
     #[test]

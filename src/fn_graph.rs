@@ -1171,7 +1171,10 @@ mod tests {
         resources.insert(0u16);
 
         let mut fn_iter_order = Vec::with_capacity(fn_graph.node_count());
-        fn_graph.try_for_each(|f| Ok(fn_iter_order.push(f.call(&resources))))?;
+        fn_graph.try_for_each(|f| {
+            fn_iter_order.push(f.call(&resources));
+            Ok(())
+        })?;
 
         assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
@@ -1187,11 +1190,11 @@ mod tests {
             fn_graph_builder.build()
         };
 
-        let call_fn = |f: &Box<dyn FnRes<Ret = u32>>| f.call(&resources);
+        let call_fn = |f: &dyn FnRes<Ret = u32>| f.call(&resources);
         let mut fn_iter = fn_graph.iter_insertion();
-        assert_eq!(Some(1), fn_iter.next().map(call_fn));
-        assert_eq!(Some(2), fn_iter.next().map(call_fn));
-        assert_eq!(None, fn_iter.next().map(call_fn));
+        assert_eq!(Some(1), fn_iter.next().map(|f| call_fn(f.as_ref())));
+        assert_eq!(Some(2), fn_iter.next().map(|f| call_fn(f.as_ref())));
+        assert_eq!(None, fn_iter.next().map(|f| call_fn(f.as_ref())));
     }
 
     #[test]
@@ -1240,12 +1243,21 @@ mod tests {
             fn_graph_builder.build()
         };
 
-        let call_fn = |(fn_id, f): (FnId, &Box<dyn FnRes<Ret = u32>>)| (fn_id, f.call(&resources));
+        let call_fn = |(fn_id, f): (FnId, &dyn FnRes<Ret = u32>)| (fn_id, f.call(&resources));
         let mut fn_iter = fn_graph.iter_insertion_with_indices();
 
-        assert_eq!(Some((FnId::new(0), 1)), fn_iter.next().map(call_fn));
-        assert_eq!(Some((FnId::new(1), 2)), fn_iter.next().map(call_fn));
-        assert_eq!(None, fn_iter.next().map(call_fn));
+        assert_eq!(
+            Some((FnId::new(0), 1)),
+            fn_iter.next().map(|(id, f)| call_fn((id, f.as_ref())))
+        );
+        assert_eq!(
+            Some((FnId::new(1), 2)),
+            fn_iter.next().map(|(id, f)| call_fn((id, f.as_ref())))
+        );
+        assert_eq!(
+            None,
+            fn_iter.next().map(|(id, f)| call_fn((id, f.as_ref())))
+        );
     }
 
     #[cfg(feature = "async")]
@@ -2154,13 +2166,9 @@ mod tests {
             t
         }
 
-        fn complex_graph_unit() -> Result<
-            (
-                FnGraph<Box<dyn FnRes<Ret = BoxFuture<'static, &'static str>>>>,
-                Receiver<&'static str>,
-            ),
-            WouldCycle<Edge>,
-        > {
+        type BoxFnRes = Box<dyn FnRes<Ret = BoxFuture<'static, &'static str>>>;
+        fn complex_graph_unit()
+        -> Result<(FnGraph<BoxFnRes>, Receiver<&'static str>), WouldCycle<Edge>> {
             // a - b --------- e
             //   \          / /
             //    '-- c - d  /
@@ -2263,13 +2271,10 @@ mod tests {
             Ok((fn_graph, seq_rx))
         }
 
-        fn complex_graph_unit_mut() -> Result<
-            (
-                FnGraph<Box<dyn FnResMut<Ret = BoxFuture<'static, &'static str>>>>,
-                Receiver<&'static str>,
-            ),
-            WouldCycle<Edge>,
-        > {
+        type BoxFnResMut = Box<dyn FnResMut<Ret = BoxFuture<'static, &'static str>>>;
+
+        fn complex_graph_unit_mut()
+        -> Result<(FnGraph<BoxFnResMut>, Receiver<&'static str>), WouldCycle<Edge>> {
             // a - b --------- e
             //   \          / /
             //    '-- c - d  /
