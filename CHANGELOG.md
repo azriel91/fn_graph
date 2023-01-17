@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.8.1 (2023-01-18)
 
 * Fixed streaming not returning when graph is empty.
 
