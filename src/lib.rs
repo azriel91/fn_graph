@@ -120,9 +120,7 @@ mod rank;
 mod type_ids;
 
 #[cfg(feature = "async")]
-pub use crate::{fn_ref::FnRef, fn_ref_mut::FnRefMut};
+pub use crate::fn_ref::FnRef;
 
 #[cfg(feature = "async")]
 mod fn_ref;
-#[cfg(feature = "async")]
-mod fn_ref_mut;
