@@ -20,3 +20,27 @@ unsafe impl IndexType for FnIdInner {
         FnIdInner(std::usize::MAX)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cmp::Ordering;
+
+    use super::FnIdInner;
+
+    #[test]
+    fn debug() {
+        assert_eq!("FnIdInner(1)", format!("{:?}", FnIdInner(1)));
+    }
+
+    #[test]
+    fn default() {
+        assert_eq!(FnIdInner(0), FnIdInner::default());
+    }
+
+    #[test]
+    fn partial_ord() {
+        assert!(FnIdInner(1) > FnIdInner(0));
+        assert!(FnIdInner(0) < FnIdInner(1));
+        assert_eq!(Ordering::Equal, FnIdInner(1).cmp(&FnIdInner(1)));
+    }
+}

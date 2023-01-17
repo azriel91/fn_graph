@@ -15,12 +15,12 @@
 //! Add the following to `Cargo.toml`
 //!
 //! ```toml
-//! fn_graph = "0.8.0"
+//! fn_graph = "0.8.1"
 //!
 //! # Integrate with `fn_meta` and/or `resman`
-//! fn_graph = { version = "0.8.0", features = ["fn_meta"] }
-//! fn_graph = { version = "0.8.0", features = ["resman"] }
-//! fn_graph = { version = "0.8.0", features = ["fn_meta", "resman"] }
+//! fn_graph = { version = "0.8.1", features = ["fn_meta"] }
+//! fn_graph = { version = "0.8.1", features = ["resman"] }
+//! fn_graph = { version = "0.8.1", features = ["fn_meta", "resman"] }
 //! ```
 //!
 //! # Rationale
@@ -120,9 +120,7 @@ mod rank;
 mod type_ids;
 
 #[cfg(feature = "async")]
-pub use crate::{fn_ref::FnRef, fn_ref_mut::FnRefMut};
+pub use crate::fn_ref::FnRef;
 
 #[cfg(feature = "async")]
 mod fn_ref;
-#[cfg(feature = "async")]
-mod fn_ref_mut;

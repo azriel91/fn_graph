@@ -79,6 +79,13 @@ mod tests {
             W(&mut 1u32).borrow_muts().as_slice()
         );
     }
+
+    #[test]
+    fn debug() {
+        let w = W::<'_, u32>(&1);
+
+        assert_eq!("W(1)", format!("{w:?}"));
+    }
 }
 
 #[cfg(feature = "resman")]
@@ -95,5 +102,15 @@ mod tests {
         resources.insert(1u32);
 
         assert_eq!(1, *W::<'_, u32>::borrow(&resources));
+    }
+
+    #[test]
+    fn debug() {
+        let mut resources = Resources::new();
+        resources.insert(1u32);
+
+        let w = W::<'_, u32>::borrow(&resources);
+
+        assert_eq!("RefMut { inner: 1 }", format!("{w:?}"));
     }
 }

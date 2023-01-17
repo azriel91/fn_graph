@@ -5,14 +5,12 @@ use std::{
 
 use daggy::{
     petgraph::{graph::NodeReferences, visit::Topo},
-    Dag, NodeWeightsMut,
+    Dag, NodeWeightsMut, Walker,
 };
 use fixedbitset::FixedBitSet;
 
-use crate::{Edge, EdgeCounts, FnId, FnIdInner, Rank};
+use crate::{Edge, FnId, FnIdInner, Rank};
 
-#[cfg(feature = "async")]
-use daggy::Walker;
 #[cfg(feature = "async")]
 use futures::{
     future::{Future, LocalBoxFuture},
@@ -26,7 +24,7 @@ use tokio::sync::{
 };
 
 #[cfg(feature = "async")]
-use crate::FnRef;
+use crate::{EdgeCounts, FnRef};
 
 /// Directed acyclic graph of functions.
 ///
@@ -47,6 +45,7 @@ pub struct FnGraph<F> {
     /// remove from the graph. So we don't need to use a `HashMap` here.
     pub(crate) ranks: Vec<Rank>,
     /// Number of incoming and outgoing edges of each function.
+    #[cfg(feature = "async")]
     pub(crate) edge_counts: EdgeCounts,
 }
 
@@ -142,6 +141,12 @@ impl<F> FnGraph<F> {
         let mut fns_remaining = graph_structure.node_count();
         let mut fn_ready_tx = Some(fn_ready_tx);
         let mut fn_done_tx = Some(fn_done_tx);
+
+        if fns_remaining == 0 {
+            fn_done_tx.take();
+            fn_ready_tx.take();
+        }
+
         stream::poll_fn(move |context| {
             match fn_done_rx.poll_recv(context) {
                 Poll::Pending => {}
@@ -252,7 +257,10 @@ impl<F> FnGraph<F> {
 
         let fns_remaining = graph_structure.node_count();
         let graph = &mut self.graph;
-        let fn_done_tx = Some(fn_done_tx);
+        let mut fn_done_tx = Some(fn_done_tx);
+        if fns_remaining == 0 {
+            fn_done_tx.take();
+        }
         let scheduler = async move {
             let (_graph, _fns_remaining, _fn_done_tx, seed, _fn_fold) = stream::poll_fn(
                 move |context| fn_ready_rx.poll_recv(context),
@@ -378,6 +386,10 @@ impl<F> FnGraph<F> {
         let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
         let fn_refs = &self.graph;
+
+        if graph_structure.node_count() == 0 {
+            fn_done_tx.write().await.take();
+        }
         let scheduler = async move {
             stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
                 .for_each_concurrent(limit, |fn_id| async move {
@@ -498,6 +510,10 @@ impl<F> FnGraph<F> {
             .map(RwLock::new)
             .collect::<Vec<_>>();
         let fn_mut_refs = &fn_mut_refs;
+
+        if graph_structure.node_count() == 0 {
+            fn_done_tx.write().await.take();
+        }
         let scheduler = async move {
             stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
                 .for_each_concurrent(limit, |fn_id| async move {
@@ -530,6 +546,7 @@ impl<F> FnGraph<F> {
 
     /// Sends IDs of function whose predecessors have been executed to
     /// `fn_ready_tx`.
+    #[cfg(feature = "async")]
     async fn fn_ready_queuer(
         graph_structure: &Dag<(), Edge, FnIdInner>,
         predecessor_counts: Vec<usize>,
@@ -537,7 +554,10 @@ impl<F> FnGraph<F> {
         fn_ready_tx: Sender<FnId>,
     ) {
         let fns_remaining = graph_structure.node_count();
-        let fn_ready_tx = Some(fn_ready_tx);
+        let mut fn_ready_tx = Some(fn_ready_tx);
+        if fns_remaining == 0 {
+            fn_ready_tx.take();
+        }
         stream::poll_fn(move |context| fn_done_rx.poll_recv(context))
             .fold(
                 (fns_remaining, predecessor_counts, fn_ready_tx),
@@ -674,6 +694,10 @@ impl<F> FnGraph<F> {
         let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
         let fn_refs = &self.graph;
+
+        if graph_structure.node_count() == 0 {
+            fn_done_tx.write().await.take();
+        }
         let scheduler = async move {
             let result_tx_ref = &result_tx;
 
@@ -994,6 +1018,7 @@ impl<F> Default for FnGraph<F> {
             graph_structure: Dag::new(),
             graph_structure_rev: Dag::new(),
             ranks: Vec::new(),
+            #[cfg(feature = "async")]
             edge_counts: EdgeCounts::default(),
         }
     }
@@ -1015,6 +1040,7 @@ impl<F> DerefMut for FnGraph<F> {
     }
 }
 
+#[cfg(feature = "async")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IterDirection {
     Forward,
@@ -1145,7 +1171,10 @@ mod tests {
         resources.insert(0u16);
 
         let mut fn_iter_order = Vec::with_capacity(fn_graph.node_count());
-        fn_graph.try_for_each(|f| Ok(fn_iter_order.push(f.call(&resources))))?;
+        fn_graph.try_for_each(|f| {
+            fn_iter_order.push(f.call(&resources));
+            Ok(())
+        })?;
 
         assert_eq!(["f", "a", "b", "c", "d", "e"], fn_iter_order.as_slice());
         Ok(())
@@ -1161,11 +1190,11 @@ mod tests {
             fn_graph_builder.build()
         };
 
-        let call_fn = |f: &Box<dyn FnRes<Ret = u32>>| f.call(&resources);
+        let call_fn = |f: &dyn FnRes<Ret = u32>| f.call(&resources);
         let mut fn_iter = fn_graph.iter_insertion();
-        assert_eq!(Some(1), fn_iter.next().map(call_fn));
-        assert_eq!(Some(2), fn_iter.next().map(call_fn));
-        assert_eq!(None, fn_iter.next().map(call_fn));
+        assert_eq!(Some(1), fn_iter.next().map(|f| call_fn(f.as_ref())));
+        assert_eq!(Some(2), fn_iter.next().map(|f| call_fn(f.as_ref())));
+        assert_eq!(None, fn_iter.next().map(|f| call_fn(f.as_ref())));
     }
 
     #[test]
@@ -1214,12 +1243,21 @@ mod tests {
             fn_graph_builder.build()
         };
 
-        let call_fn = |(fn_id, f): (FnId, &Box<dyn FnRes<Ret = u32>>)| (fn_id, f.call(&resources));
+        let call_fn = |(fn_id, f): (FnId, &dyn FnRes<Ret = u32>)| (fn_id, f.call(&resources));
         let mut fn_iter = fn_graph.iter_insertion_with_indices();
 
-        assert_eq!(Some((FnId::new(0), 1)), fn_iter.next().map(call_fn));
-        assert_eq!(Some((FnId::new(1), 2)), fn_iter.next().map(call_fn));
-        assert_eq!(None, fn_iter.next().map(call_fn));
+        assert_eq!(
+            Some((FnId::new(0), 1)),
+            fn_iter.next().map(|(id, f)| call_fn((id, f.as_ref())))
+        );
+        assert_eq!(
+            Some((FnId::new(1), 2)),
+            fn_iter.next().map(|(id, f)| call_fn((id, f.as_ref())))
+        );
+        assert_eq!(
+            None,
+            fn_iter.next().map(|(id, f)| call_fn((id, f.as_ref())))
+        );
     }
 
     #[cfg(feature = "async")]
@@ -1230,7 +1268,6 @@ mod tests {
         use futures::{future::BoxFuture, stream, Future, FutureExt, StreamExt};
         use resman::{FnRes, FnResMut, IntoFnRes, IntoFnResMut, Resources};
         use tokio::{
-            runtime,
             sync::mpsc::{self, error::TryRecvError, Receiver},
             time::{self, Duration, Instant},
         };
@@ -1244,916 +1281,861 @@ mod tests {
             };
         }
 
-        #[test]
-        fn stream_returns_fns_in_dep_order_concurrently() -> Result<(), Box<dyn std::error::Error>>
-        {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+        #[tokio::test]
+        async fn stream_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.stream().for_each_concurrent(None, |f| async move {
+            fn_graph.stream().for_each(|_f| async {}).await;
+        }
+
+        #[tokio::test]
+        async fn stream_returns_fns_in_dep_order_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.stream().for_each_concurrent(None, |f| async move {
+                    let _ = f.call(resources).await;
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .take(fn_graph.node_count())
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn stream_rev_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph.stream_rev().for_each(|_f| async {}).await;
+        }
+
+        #[tokio::test]
+        async fn stream_rev_returns_fns_in_dep_rev_order_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph
+                    .stream_rev()
+                    .for_each_concurrent(None, |f| async move {
                         let _ = f.call(resources).await;
                     }),
-                )
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .take(fn_graph.node_count())
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .take(fn_graph.node_count())
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
-                Ok(())
-            })
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
         }
 
-        #[test]
-        fn stream_rev_returns_fns_in_dep_rev_order_concurrently()
+        #[tokio::test]
+        async fn fold_async_returns_when_graph_is_empty() {
+            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph.fold_async((), |(), _f| Box::pin(async {})).await;
+        }
+
+        #[tokio::test]
+        async fn fold_async_runs_fns_in_dep_order_mut() -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.fold_async(resources, |resources, f| {
+                    Box::pin(async move {
+                        f.call_mut(&resources).await;
+                        resources
+                    })
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn fold_rev_async_returns_when_graph_is_empty() {
+            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .fold_rev_async((), |(), _f| Box::pin(async {}))
+                .await;
+        }
+
+        #[tokio::test]
+        async fn fold_rev_async_runs_fns_in_dep_rev_order_mut()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph
-                        .stream_rev()
-                        .for_each_concurrent(None, |f| async move {
-                            let _ = f.call(resources).await;
-                        }),
-                )
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.fold_rev_async(resources, |resources, f| {
+                    Box::pin(async move {
+                        f.call_mut(&resources).await;
+                        resources
+                    })
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .take(fn_graph.node_count())
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
-                Ok(())
-            })
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
         }
 
-        #[test]
-        fn fold_async_runs_fns_in_dep_order_mut() -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+        #[tokio::test]
+        async fn for_each_concurrent_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(385), // On Windows the duration can be much higher
-                    fn_graph.fold_async(resources, |resources, f| {
-                        Box::pin(async move {
-                            f.call_mut(&resources).await;
-                            resources
-                        })
-                    }),
-                )
+            fn_graph.for_each_concurrent(None, |_f| async {}).await;
+        }
+
+        #[tokio::test]
+        async fn for_each_concurrent_runs_fns_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.for_each_concurrent(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        let _ = fut.await;
+                    }
+                }),
+            )
+            .await;
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
-                Ok(())
-            })
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+            Ok(())
         }
 
-        #[test]
-        fn fold_rev_async_runs_fns_in_dep_rev_order_mut() -> Result<(), Box<dyn std::error::Error>>
-        {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+        #[tokio::test]
+        async fn for_each_concurrent_rev_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(385), // On Windows the duration can be much higher
-                    fn_graph.fold_rev_async(resources, |resources, f| {
-                        Box::pin(async move {
-                            f.call_mut(&resources).await;
-                            resources
-                        })
-                    }),
-                )
+            fn_graph.for_each_concurrent_rev(None, |_f| async {}).await;
+        }
+
+        #[tokio::test]
+        async fn for_each_concurrent_rev_runs_fns_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.for_each_concurrent_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        let _ = fut.await;
+                    }
+                }),
+            )
+            .await;
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
-                Ok(())
-            })
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
         }
 
-        #[test]
-        fn for_each_concurrent_runs_fns_concurrently() -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+        #[tokio::test]
+        async fn try_for_each_concurrent_returns_when_graph_is_empty() -> Result<(), ()> {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.for_each_concurrent(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            let _ = fut.await;
-                        }
-                    }),
-                )
-                .await;
-
-                seq_rx.close();
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
-                Ok(())
-            })
-        }
-
-        #[test]
-        fn for_each_concurrent_rev_runs_fns_concurrently() -> Result<(), Box<dyn std::error::Error>>
-        {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
-
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.for_each_concurrent_rev(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            let _ = fut.await;
-                        }
-                    }),
-                )
-                .await;
-
-                seq_rx.close();
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
-                Ok(())
-            })
-        }
-
-        #[test]
-        fn try_for_each_concurrent_runs_fns_concurrently() -> Result<(), Box<dyn std::error::Error>>
-        {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
-
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.try_for_each_concurrent(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            let _ = fut.await;
-                            Result::<_, TestError>::Ok(())
-                        }
-                    }),
-                )
+            fn_graph
+                .try_for_each_concurrent(None, |_f| async { Ok::<_, ()>(()) })
                 .await
-                .unwrap();
-
-                seq_rx.close();
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
-
-                Ok(())
-            })
+                .map_err(|_| ())
         }
 
-        #[test]
-        fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure()
+        #[tokio::test]
+        async fn try_for_each_concurrent_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                let result = test_timeout(
-                    Duration::from_millis(50),
-                    Duration::from_millis(70),
-                    fn_graph.try_for_each_concurrent(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "a" => Err(TestError("a")),
-                                _ => Ok(()),
-                            }
-                        }
-                    }),
-                )
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        let _ = fut.await;
+                        Result::<_, TestError>::Ok(())
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                assert_eq!([TestError("a")], result.unwrap_err().as_slice());
-                assert_eq!("f", seq_rx.try_recv().unwrap());
-                assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
 
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure_variation()
+        #[tokio::test]
+        async fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                let result = test_timeout(
-                    Duration::from_millis(100),
-                    Duration::from_millis(120),
-                    fn_graph.try_for_each_concurrent(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "c" => Err(TestError("c")),
-                                _ => Ok(()),
-                            }
+            let result = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "a" => Err(TestError("a")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
-                .await;
+                    }
+                }),
+            )
+            .await;
 
-                assert_eq!([TestError("c")], result.unwrap_err().as_slice());
-                assert_eq!("f", seq_rx.try_recv().unwrap());
-                assert_eq!("a", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+            assert_eq!([TestError("a")], result.unwrap_err().as_slice());
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_gracefully_ends_when_multiple_functions_return_failure()
+        #[tokio::test]
+        async fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                let result = test_timeout(
-                    Duration::from_millis(100),
-                    Duration::from_millis(120),
-                    fn_graph.try_for_each_concurrent(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                "c" => Err(TestError("c")),
-                                _ => Ok(()),
-                            }
+            let result = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(120),
+                fn_graph.try_for_each_concurrent(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "c" => Err(TestError("c")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
-                .await;
+                    }
+                }),
+            )
+            .await;
 
-                // Both "c" and "b" being present proves we have waited for in-progress tasks to
-                // complete.
-                assert_eq!(
-                    [TestError("c"), TestError("b")],
-                    result.unwrap_err().as_slice()
-                );
-                assert_eq!("f", seq_rx.try_recv().unwrap());
-                assert_eq!("a", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+            assert_eq!([TestError("c")], result.unwrap_err().as_slice());
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_rev_runs_fns_concurrently()
+        #[tokio::test]
+        async fn try_for_each_concurrent_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.try_for_each_concurrent_rev(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            let _ = fut.await;
-                            Result::<_, TestError>::Ok(())
+            let result = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(120),
+                fn_graph.try_for_each_concurrent(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            "c" => Err(TestError("c")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
+                    }
+                }),
+            )
+            .await;
+
+            // Both "c" and "b" being present proves we have waited for in-progress tasks to
+            // complete.
+            assert_eq!(
+                [TestError("c"), TestError("b")],
+                result.unwrap_err().as_slice()
+            );
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_rev_returns_when_graph_is_empty() -> Result<(), ()> {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .try_for_each_concurrent_rev(None, |_f| async { Ok::<_, ()>(()) })
                 .await
-                .unwrap();
-
-                seq_rx.close();
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
-
-                Ok(())
-            })
+                .map_err(|_| ())
         }
 
-        #[test]
-        fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure()
+        #[tokio::test]
+        async fn try_for_each_concurrent_rev_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                let result = test_timeout(
-                    Duration::from_millis(50),
-                    Duration::from_millis(70),
-                    fn_graph.try_for_each_concurrent_rev(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "e" => Err(TestError("e")),
-                                _ => Ok(()),
-                            }
-                        }
-                    }),
-                )
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        let _ = fut.await;
+                        Result::<_, TestError>::Ok(())
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                assert_eq!([TestError("e")], result.unwrap_err().as_slice());
-                assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
 
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        #[tokio::test]
+        async fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                let result = test_timeout(
-                    Duration::from_millis(150),
-                    Duration::from_millis(190),
-                    fn_graph.try_for_each_concurrent_rev(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                _ => Ok(()),
-                            }
+            let result = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "e" => Err(TestError("e")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!([TestError("e")], result.unwrap_err().as_slice());
+            assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let result = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            _ => Ok(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!([TestError("b")], result.unwrap_err().as_slice());
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_rev_gracefully_ends_when_multiple_functions_return_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let result = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            "c" => Err(TestError("c")),
+                            _ => Ok(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!(
+                [TestError("b"), TestError("c")],
+                result.unwrap_err().as_slice()
+            );
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn for_each_concurrent_mut_runs_fns_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.for_each_concurrent_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        let _ = fut.await;
+                    }
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                assert_eq!([TestError("b")], result.unwrap_err().as_slice());
-                assert_eq!("e", seq_rx.try_recv().unwrap());
-                assert_eq!("d", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
-
-                Ok(())
-            })
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_rev_gracefully_ends_when_multiple_functions_return_failure()
+        #[tokio::test]
+        async fn for_each_concurrent_mut_rev_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.for_each_concurrent_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        let _ = fut.await;
+                    }
+                }),
+            )
+            .await;
 
-                let result = test_timeout(
-                    Duration::from_millis(150),
-                    Duration::from_millis(190),
-                    fn_graph.try_for_each_concurrent_rev(None, |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                "c" => Err(TestError("c")),
-                                _ => Ok(()),
-                            }
-                        }
-                    }),
-                )
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                assert_eq!(
-                    [TestError("b"), TestError("c")],
-                    result.unwrap_err().as_slice()
-                );
-                assert_eq!("e", seq_rx.try_recv().unwrap());
-                assert_eq!("d", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
-
-                Ok(())
-            })
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
         }
 
-        #[test]
-        fn for_each_concurrent_mut_runs_fns_concurrently() -> Result<(), Box<dyn std::error::Error>>
-        {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_runs_fns_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.for_each_concurrent_mut(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            let _ = fut.await;
-                        }
-                    }),
-                )
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        let _ = fut.await;
+                        Result::<_, TestError>::Ok(())
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
 
-                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn for_each_concurrent_mut_rev_runs_fns_concurrently()
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.for_each_concurrent_mut_rev(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            let _ = fut.await;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let result = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "a" => Err(TestError("a")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!([TestError("a")], result.unwrap_err().as_slice());
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure_variation()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let result = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(120),
+                fn_graph.try_for_each_concurrent_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "c" => Err(TestError("c")),
+                            _ => Ok(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!([TestError("c")], result.unwrap_err().as_slice());
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_gracefully_ends_when_multiple_functions_return_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let result = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(120),
+                fn_graph.try_for_each_concurrent_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            "c" => Err(TestError("c")),
+                            _ => Ok(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            // Both "c" and "b" being present proves we have waited for in-progress tasks to
+            // complete.
+            assert_eq!(
+                [TestError("c"), TestError("b")],
+                result.unwrap_err().as_slice()
+            );
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_rev_runs_fns_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        let _ = fut.await;
+                        Result::<_, TestError>::Ok(())
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
                 .await;
 
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
 
-                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_mut_runs_fns_concurrently_mut()
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.try_for_each_concurrent_mut(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            let _ = fut.await;
-                            Result::<_, TestError>::Ok(())
+            let result = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "e" => Err(TestError("e")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
-                .await
-                .unwrap();
+                    }
+                }),
+            )
+            .await;
 
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
+            assert_eq!([TestError("e")], result.unwrap_err().as_slice());
+            assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
-                assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
-
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure()
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                let result = test_timeout(
-                    Duration::from_millis(50),
-                    Duration::from_millis(70),
-                    fn_graph.try_for_each_concurrent_mut(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "a" => Err(TestError("a")),
-                                _ => Ok(()),
-                            }
+            let result = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
-                .await;
+                    }
+                }),
+            )
+            .await;
 
-                assert_eq!([TestError("a")], result.unwrap_err().as_slice());
-                assert_eq!("f", seq_rx.try_recv().unwrap());
-                assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+            assert_eq!([TestError("b")], result.unwrap_err().as_slice());
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
-                Ok(())
-            })
+            Ok(())
         }
 
-        #[test]
-        fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure_variation()
+        #[tokio::test]
+        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
 
-                let result = test_timeout(
-                    Duration::from_millis(100),
-                    Duration::from_millis(120),
-                    fn_graph.try_for_each_concurrent_mut(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "c" => Err(TestError("c")),
-                                _ => Ok(()),
-                            }
+            let result = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            "c" => Err(TestError("c")),
+                            _ => Ok(()),
                         }
-                    }),
-                )
-                .await;
+                    }
+                }),
+            )
+            .await;
 
-                assert_eq!([TestError("c")], result.unwrap_err().as_slice());
-                assert_eq!("f", seq_rx.try_recv().unwrap());
-                assert_eq!("a", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+            assert_eq!(
+                [TestError("b"), TestError("c")],
+                result.unwrap_err().as_slice()
+            );
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
-                Ok(())
-            })
-        }
-
-        #[test]
-        fn try_for_each_concurrent_mut_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
-
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-
-                let result = test_timeout(
-                    Duration::from_millis(100),
-                    Duration::from_millis(120),
-                    fn_graph.try_for_each_concurrent_mut(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                "c" => Err(TestError("c")),
-                                _ => Ok(()),
-                            }
-                        }
-                    }),
-                )
-                .await;
-
-                // Both "c" and "b" being present proves we have waited for in-progress tasks to
-                // complete.
-                assert_eq!(
-                    [TestError("c"), TestError("b")],
-                    result.unwrap_err().as_slice()
-                );
-                assert_eq!("f", seq_rx.try_recv().unwrap());
-                assert_eq!("a", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
-
-                Ok(())
-            })
-        }
-
-        #[test]
-        fn try_for_each_concurrent_mut_rev_runs_fns_concurrently_mut()
-        -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
-
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-
-                test_timeout(
-                    Duration::from_millis(200),
-                    Duration::from_millis(255),
-                    fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            let _ = fut.await;
-                            Result::<_, TestError>::Ok(())
-                        }
-                    }),
-                )
-                .await
-                .unwrap();
-
-                let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
-                    .collect::<Vec<&'static str>>()
-                    .await;
-
-                assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
-
-                Ok(())
-            })
-        }
-
-        #[test]
-        fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
-
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-
-                let result = test_timeout(
-                    Duration::from_millis(50),
-                    Duration::from_millis(70),
-                    fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "e" => Err(TestError("e")),
-                                _ => Ok(()),
-                            }
-                        }
-                    }),
-                )
-                .await;
-
-                assert_eq!([TestError("e")], result.unwrap_err().as_slice());
-                assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
-
-                Ok(())
-            })
-        }
-
-        #[test]
-        fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
-
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-
-                let result = test_timeout(
-                    Duration::from_millis(150),
-                    Duration::from_millis(190),
-                    fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                _ => Ok(()),
-                            }
-                        }
-                    }),
-                )
-                .await;
-
-                assert_eq!([TestError("b")], result.unwrap_err().as_slice());
-                assert_eq!("e", seq_rx.try_recv().unwrap());
-                assert_eq!("d", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
-
-                Ok(())
-            })
-        }
-
-        #[test]
-        fn try_for_each_concurrent_mut_rev_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
-            let rt = runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()?;
-            rt.block_on(async {
-                let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
-
-                let mut resources = Resources::new();
-                resources.insert(0u8);
-                resources.insert(0u16);
-                let resources = &resources;
-
-                let result = test_timeout(
-                    Duration::from_millis(150),
-                    Duration::from_millis(190),
-                    fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                "c" => Err(TestError("c")),
-                                _ => Ok(()),
-                            }
-                        }
-                    }),
-                )
-                .await;
-
-                assert_eq!(
-                    [TestError("b"), TestError("c")],
-                    result.unwrap_err().as_slice()
-                );
-                assert_eq!("e", seq_rx.try_recv().unwrap());
-                assert_eq!("d", seq_rx.try_recv().unwrap());
-                assert_eq!("b", seq_rx.try_recv().unwrap());
-                assert_eq!("c", seq_rx.try_recv().unwrap());
-                assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
-
-                Ok(())
-            })
+            Ok(())
         }
 
         async fn test_timeout<T, Fut>(lower: Duration, upper: Duration, fut: Fut) -> T
@@ -2184,13 +2166,9 @@ mod tests {
             t
         }
 
-        fn complex_graph_unit() -> Result<
-            (
-                FnGraph<Box<dyn FnRes<Ret = BoxFuture<'static, &'static str>>>>,
-                Receiver<&'static str>,
-            ),
-            WouldCycle<Edge>,
-        > {
+        type BoxFnRes = Box<dyn FnRes<Ret = BoxFuture<'static, &'static str>>>;
+        fn complex_graph_unit()
+        -> Result<(FnGraph<BoxFnRes>, Receiver<&'static str>), WouldCycle<Edge>> {
             // a - b --------- e
             //   \          / /
             //    '-- c - d  /
@@ -2293,13 +2271,10 @@ mod tests {
             Ok((fn_graph, seq_rx))
         }
 
-        fn complex_graph_unit_mut() -> Result<
-            (
-                FnGraph<Box<dyn FnResMut<Ret = BoxFuture<'static, &'static str>>>>,
-                Receiver<&'static str>,
-            ),
-            WouldCycle<Edge>,
-        > {
+        type BoxFnResMut = Box<dyn FnResMut<Ret = BoxFuture<'static, &'static str>>>;
+
+        fn complex_graph_unit_mut()
+        -> Result<(FnGraph<BoxFnResMut>, Receiver<&'static str>), WouldCycle<Edge>> {
             // a - b --------- e
             //   \          / /
             //    '-- c - d  /

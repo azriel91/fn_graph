@@ -26,3 +26,46 @@ impl EdgeCounts {
         self.outgoing.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::EdgeCounts;
+
+    #[test]
+    fn clone() {
+        let edge_counts = EdgeCounts {
+            incoming: vec![1, 2],
+            outgoing: vec![2, 1],
+        };
+
+        assert_eq!(edge_counts, edge_counts.clone());
+    }
+
+    #[test]
+    fn debug() {
+        let edge_counts = EdgeCounts {
+            incoming: vec![1, 2],
+            outgoing: vec![2, 1],
+        };
+
+        assert_eq!(
+            "EdgeCounts { incoming: [1, 2], outgoing: [2, 1] }",
+            format!("{edge_counts:?}")
+        );
+    }
+
+    #[test]
+    fn partial_eq() {
+        let edge_counts_0 = EdgeCounts {
+            incoming: vec![1, 2],
+            outgoing: vec![2, 1],
+        };
+        let edge_counts_1 = EdgeCounts {
+            incoming: vec![2, 3],
+            outgoing: vec![3, 2],
+        };
+
+        assert_eq!(edge_counts_0, edge_counts_0.clone());
+        assert!(edge_counts_0 != edge_counts_1);
+    }
+}

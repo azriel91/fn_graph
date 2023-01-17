@@ -32,3 +32,28 @@ impl<'f, F> Drop for FnRef<'f, F> {
         let _ = self.fn_done_tx.try_send(self.fn_id);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use crate::FnId;
+
+    use super::FnRef;
+
+    #[test]
+    fn debug() {
+        let (fn_done_tx, _fn_done_rx) = mpsc::channel(1);
+
+        let fn_ref = FnRef {
+            fn_id: FnId::new(1),
+            r#fn: &(),
+            fn_done_tx,
+        };
+
+        assert!(
+            format!("{fn_ref:?}")
+                .starts_with("FnRef { fn_id: NodeIndex(FnIdInner(1)), fn: (), fn_done_tx: Sender")
+        );
+    }
+}
