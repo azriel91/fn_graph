@@ -142,6 +142,12 @@ impl<F> FnGraph<F> {
         let mut fns_remaining = graph_structure.node_count();
         let mut fn_ready_tx = Some(fn_ready_tx);
         let mut fn_done_tx = Some(fn_done_tx);
+
+        if fns_remaining == 0 {
+            fn_done_tx.take();
+            fn_ready_tx.take();
+        }
+
         stream::poll_fn(move |context| {
             match fn_done_rx.poll_recv(context) {
                 Poll::Pending => {}
@@ -252,7 +258,10 @@ impl<F> FnGraph<F> {
 
         let fns_remaining = graph_structure.node_count();
         let graph = &mut self.graph;
-        let fn_done_tx = Some(fn_done_tx);
+        let mut fn_done_tx = Some(fn_done_tx);
+        if fns_remaining == 0 {
+            fn_done_tx.take();
+        }
         let scheduler = async move {
             let (_graph, _fns_remaining, _fn_done_tx, seed, _fn_fold) = stream::poll_fn(
                 move |context| fn_ready_rx.poll_recv(context),
@@ -378,6 +387,10 @@ impl<F> FnGraph<F> {
         let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
         let fn_refs = &self.graph;
+
+        if graph_structure.node_count() == 0 {
+            fn_done_tx.write().await.take();
+        }
         let scheduler = async move {
             stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
                 .for_each_concurrent(limit, |fn_id| async move {
@@ -498,6 +511,10 @@ impl<F> FnGraph<F> {
             .map(RwLock::new)
             .collect::<Vec<_>>();
         let fn_mut_refs = &fn_mut_refs;
+
+        if graph_structure.node_count() == 0 {
+            fn_done_tx.write().await.take();
+        }
         let scheduler = async move {
             stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
                 .for_each_concurrent(limit, |fn_id| async move {
@@ -537,7 +554,10 @@ impl<F> FnGraph<F> {
         fn_ready_tx: Sender<FnId>,
     ) {
         let fns_remaining = graph_structure.node_count();
-        let fn_ready_tx = Some(fn_ready_tx);
+        let mut fn_ready_tx = Some(fn_ready_tx);
+        if fns_remaining == 0 {
+            fn_ready_tx.take();
+        }
         stream::poll_fn(move |context| fn_done_rx.poll_recv(context))
             .fold(
                 (fns_remaining, predecessor_counts, fn_ready_tx),
@@ -674,6 +694,10 @@ impl<F> FnGraph<F> {
         let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
         let fn_refs = &self.graph;
+
+        if graph_structure.node_count() == 0 {
+            fn_done_tx.write().await.take();
+        }
         let scheduler = async move {
             let result_tx_ref = &result_tx;
 
@@ -1244,6 +1268,13 @@ mod tests {
             };
         }
 
+        #[tokio::test]
+        async fn stream_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph.stream().for_each(|_f| async {}).await;
+        }
+
         #[test]
         fn stream_returns_fns_in_dep_order_concurrently() -> Result<(), Box<dyn std::error::Error>>
         {
@@ -1274,6 +1305,13 @@ mod tests {
                 assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
                 Ok(())
             })
+        }
+
+        #[tokio::test]
+        async fn stream_rev_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph.stream_rev().for_each(|_f| async {}).await;
         }
 
         #[test]
@@ -1310,6 +1348,13 @@ mod tests {
             })
         }
 
+        #[tokio::test]
+        async fn fold_async_returns_when_graph_is_empty() {
+            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph.fold_async((), |(), _f| Box::pin(async {})).await;
+        }
+
         #[test]
         fn fold_async_runs_fns_in_dep_order_mut() -> Result<(), Box<dyn std::error::Error>> {
             let rt = runtime::Builder::new_current_thread()
@@ -1340,6 +1385,15 @@ mod tests {
                 assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
                 Ok(())
             })
+        }
+
+        #[tokio::test]
+        async fn fold_rev_async_returns_when_graph_is_empty() {
+            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .fold_rev_async((), |(), _f| Box::pin(async {}))
+                .await;
         }
 
         #[test]
@@ -1373,6 +1427,13 @@ mod tests {
                 assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
                 Ok(())
             })
+        }
+
+        #[tokio::test]
+        async fn for_each_concurrent_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph.for_each_concurrent(None, |_f| async {}).await;
         }
 
         #[test]
@@ -1409,6 +1470,13 @@ mod tests {
             })
         }
 
+        #[tokio::test]
+        async fn for_each_concurrent_rev_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph.for_each_concurrent_rev(None, |_f| async {}).await;
+        }
+
         #[test]
         fn for_each_concurrent_rev_runs_fns_concurrently() -> Result<(), Box<dyn std::error::Error>>
         {
@@ -1442,6 +1510,16 @@ mod tests {
                 assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
                 Ok(())
             })
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_returns_when_graph_is_empty() -> Result<(), ()> {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .try_for_each_concurrent(None, |_f| async { Ok::<_, ()>(()) })
+                .await
+                .map_err(|_| ())
         }
 
         #[test]
@@ -1605,6 +1683,16 @@ mod tests {
 
                 Ok(())
             })
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_rev_returns_when_graph_is_empty() -> Result<(), ()> {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .try_for_each_concurrent_rev(None, |_f| async { Ok::<_, ()>(()) })
+                .await
+                .map_err(|_| ())
         }
 
         #[test]
