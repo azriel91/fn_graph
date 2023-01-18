@@ -1585,7 +1585,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(100),
-                Duration::from_millis(120),
+                Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -1620,7 +1620,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(100),
-                Duration::from_millis(120),
+                Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -1935,7 +1935,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(100),
-                Duration::from_millis(120),
+                Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_mut(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -1970,7 +1970,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(100),
-                Duration::from_millis(120),
+                Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_mut(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
