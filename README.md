@@ -32,7 +32,7 @@ fn_graph = { version = "0.8.1", features = ["fn_meta", "resman"] }
 
 # Rationale
 
-Support there are three tasks, each represented by a function. Each function
+Suppose there are three tasks, each represented by a function. Each function
 needs different data:
 
 | Function | Data                 |
