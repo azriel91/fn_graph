@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 (2023-04-06)
+
+* Update dependency versions.
+
+
 ## 0.8.1 (2023-01-18)
 
 * Fixed streaming not returning when graph is empty.
