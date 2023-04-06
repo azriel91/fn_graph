@@ -1,5 +1,3 @@
-use std::mem::MaybeUninit;
-
 use daggy::{Dag, WouldCycle};
 
 use crate::{DataAccessDyn, Edge, EdgeId, FnGraph, FnId, FnIdInner};
@@ -47,34 +45,11 @@ where
     /// [`add_edge`]: Self::add_edge
     /// [`add_edges`]: Self::add_edges
     pub fn add_fns<const N: usize>(&mut self, fns: [F; N]) -> [FnId; N] {
-        // Create an uninitialized array of `MaybeUninit`. The `assume_init` is safe
-        // because the type we are claiming to have initialized here is a bunch of
-        // `MaybeUninit`s, which do not require initialization.
-        //
-        // https://doc.rust-lang.org/stable/std/mem/union.MaybeUninit.html#initializing-an-array-element-by-element
-        //
-        // Switch this to `MaybeUninit::uninit_array` once it is stable.
-        let mut fn_ids: [MaybeUninit<FnId>; N] = unsafe { MaybeUninit::uninit().assume_init() };
-
+        let mut fn_ids: [FnId; N] = [FnId::default(); N];
         IntoIterator::into_iter(fns)
             .map(|f| self.add_fn(f))
             .zip(fn_ids.iter_mut())
-            .for_each(|(function_rt_id, function_rt_id_mem)| {
-                function_rt_id_mem.write(function_rt_id);
-            });
-
-        // Everything is initialized. Transmute the array to the initialized type.
-        // Unfortunately we cannot use this, see the following issues:
-        //
-        // * <https://github.com/rust-lang/rust/issues/61956>
-        // * <https://github.com/rust-lang/rust/issues/96097>
-        //
-        // let fn_ids = unsafe { mem::transmute::<_, [NodeIndex<FnId>; N]>(fn_ids) };
-
-        #[allow(clippy::let_and_return)] // for clarity with `unsafe`
-        let fn_ids = unsafe {
-            (*(&MaybeUninit::new(fn_ids) as *const _ as *const MaybeUninit<_>)).assume_init_read()
-        };
+            .for_each(|(n, fn_id)| *fn_id = n);
 
         fn_ids
     }
@@ -102,35 +77,14 @@ where
         &mut self,
         edges: [(FnId, FnId); N],
     ) -> Result<[EdgeId; N], WouldCycle<Edge>> {
-        // Create an uninitialized array of `MaybeUninit`. The `assume_init` is safe
-        // because the type we are claiming to have initialized here is a bunch of
-        // `MaybeUninit`s, which do not require initialization.
-        //
-        // https://doc.rust-lang.org/stable/std/mem/union.MaybeUninit.html#initializing-an-array-element-by-element
-        //
-        // Switch this to `MaybeUninit::uninit_array` once it is stable.
-        let mut edge_ids: [MaybeUninit<EdgeId>; N] = unsafe { MaybeUninit::uninit().assume_init() };
-
+        let mut edge_ids: [EdgeId; N] = [EdgeId::default(); N];
         IntoIterator::into_iter(edges)
             .zip(edge_ids.iter_mut())
-            .try_for_each(|((function_from, function_to), edge_index_mem)| {
-                self.add_edge(function_from, function_to).map(|edge_index| {
-                    edge_index_mem.write(edge_index);
+            .try_for_each(|((fn_from, fn_to), edge_id)| {
+                self.add_edge(fn_from, fn_to).map(|edge_index| {
+                    *edge_id = edge_index;
                 })
             })?;
-
-        // Everything is initialized. Transmute the array to the initialized type.
-        // Unfortunately we cannot use this, see the following issues:
-        //
-        // * <https://github.com/rust-lang/rust/issues/61956>
-        // * <https://github.com/rust-lang/rust/issues/96097>
-        //
-        // let edge_ids = unsafe { mem::transmute::<_, [EdgeId; N]>(edge_ids) };
-
-        #[allow(clippy::let_and_return)] // for clarity with `unsafe`
-        let edge_ids = unsafe {
-            (*(&MaybeUninit::new(edge_ids) as *const _ as *const MaybeUninit<_>)).assume_init_read()
-        };
 
         Ok(edge_ids)
     }
