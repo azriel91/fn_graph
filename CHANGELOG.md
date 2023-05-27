@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.3 (2023-05-27)
+
+* Implement `PartialEq for FnGraph`.
+* Update dependency versions.
+
+
 ## 0.8.2 (2023-04-06)
 
 * Update dependency versions.
