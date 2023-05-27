@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    ops::{Deref, DerefMut},
+    ops::{ControlFlow, Deref, DerefMut},
 };
 
 use daggy::{
@@ -1040,6 +1040,54 @@ impl<F> DerefMut for FnGraph<F> {
     }
 }
 
+impl<F> PartialEq for FnGraph<F>
+where
+    F: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        if self.graph.node_count() == other.graph.node_count()
+            && self.graph.edge_count() == other.graph.edge_count()
+        {
+            let (ControlFlow::Continue(edge_eq) | ControlFlow::Break(edge_eq)) = self
+                .graph
+                .raw_edges()
+                .iter()
+                .zip(other.graph.raw_edges().iter())
+                .try_fold(true, |_, (edge_self, edge_other)| {
+                    if edge_self.source() == edge_other.source()
+                        && edge_self.target() == edge_other.target()
+                        && edge_self.weight == edge_other.weight
+                    {
+                        ControlFlow::Continue(true)
+                    } else {
+                        ControlFlow::Break(false)
+                    }
+                });
+
+            if !edge_eq {
+                return false;
+            }
+
+            let (ControlFlow::Continue(f_eq) | ControlFlow::Break(f_eq)) = self
+                .iter_insertion()
+                .zip(other.iter_insertion())
+                .try_fold(true, |_, (f_self, f_other)| {
+                    if f_self == f_other {
+                        ControlFlow::Continue(true)
+                    } else {
+                        ControlFlow::Break(false)
+                    }
+                });
+
+            f_eq
+        } else {
+            false
+        }
+    }
+}
+
+impl<F> Eq for FnGraph<F> where F: Eq {}
+
 #[cfg(feature = "async")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IterDirection {
@@ -1062,6 +1110,75 @@ mod tests {
 
         assert_eq!(0, fn_graph.node_count());
         assert!(fn_graph.ranks().is_empty());
+    }
+
+    #[test]
+    fn partial_eq_returns_true_for_empty_graphs() {
+        let fn_graph_a = FnGraph::<u32>::new();
+        let fn_graph_b = FnGraph::<u32>::new();
+
+        assert_eq!(fn_graph_a, fn_graph_b);
+    }
+
+    #[test]
+    fn partial_eq_returns_false_for_different_value_graphs() {
+        let mut fn_graph_a = FnGraph::<u32>::new();
+        fn_graph_a.add_node(0);
+
+        let mut fn_graph_b = FnGraph::<u32>::new();
+        fn_graph_b.add_node(1);
+
+        assert_ne!(fn_graph_a, fn_graph_b);
+    }
+
+    #[test]
+    fn partial_eq_returns_true_for_same_value_same_edges_graphs() -> Result<(), WouldCycle<Edge>> {
+        let mut fn_graph_a = FnGraph::<u32>::new();
+        let a_0 = fn_graph_a.add_node(0);
+        let a_1 = fn_graph_a.add_node(1);
+        fn_graph_a.add_edge(a_0, a_1, Edge::Logic)?;
+
+        let mut fn_graph_b = FnGraph::<u32>::new();
+        let b_0 = fn_graph_b.add_node(0);
+        let b_1 = fn_graph_b.add_node(1);
+        fn_graph_b.add_edge(b_0, b_1, Edge::Logic)?;
+
+        assert_eq!(fn_graph_a, fn_graph_b);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_eq_returns_false_for_same_value_different_edge_direction_graphs()
+    -> Result<(), WouldCycle<Edge>> {
+        let mut fn_graph_a = FnGraph::<u32>::new();
+        let a_0 = fn_graph_a.add_node(0);
+        let a_1 = fn_graph_a.add_node(1);
+        fn_graph_a.add_edge(a_0, a_1, Edge::Logic)?;
+
+        let mut fn_graph_b = FnGraph::<u32>::new();
+        let b_0 = fn_graph_b.add_node(0);
+        let b_1 = fn_graph_b.add_node(1);
+        fn_graph_b.add_edge(b_1, b_0, Edge::Logic)?;
+
+        assert_ne!(fn_graph_a, fn_graph_b);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_eq_returns_false_for_same_value_different_edge_type_graphs()
+    -> Result<(), WouldCycle<Edge>> {
+        let mut fn_graph_a = FnGraph::<u32>::new();
+        let a_0 = fn_graph_a.add_node(0);
+        let a_1 = fn_graph_a.add_node(1);
+        fn_graph_a.add_edge(a_0, a_1, Edge::Logic)?;
+
+        let mut fn_graph_b = FnGraph::<u32>::new();
+        let b_0 = fn_graph_b.add_node(0);
+        let b_1 = fn_graph_b.add_node(1);
+        fn_graph_b.add_edge(b_0, b_1, Edge::Data)?;
+
+        assert_ne!(fn_graph_a, fn_graph_b);
+        Ok(())
     }
 
     #[test]
