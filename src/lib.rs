@@ -1,3 +1,5 @@
+#![cfg_attr(coverage_nightly, feature(no_coverage))]
+
 //! Dynamically managed function graph execution.
 //!
 //! This crate provides a `FnGraph`, where consumers can register a list of

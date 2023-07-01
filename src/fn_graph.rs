@@ -158,13 +158,16 @@ impl<F> FnGraph<F> {
                         predecessor_counts[child_fn_id.index()] -= 1;
                         if predecessor_counts[child_fn_id.index()] == 0 {
                             if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
-                                fn_ready_tx.try_send(child_fn_id).unwrap_or_else(|e| {
-                                    panic!(
-                                        "Failed to queue function `{}`. Cause: {}",
-                                        fn_id.index(),
-                                        e
-                                    )
-                                });
+                                fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
+                                    #[cfg_attr(coverage_nightly, no_coverage)]
+                                    |e| {
+                                        panic!(
+                                            "Failed to queue function `{}`. Cause: {}",
+                                            fn_id.index(),
+                                            e
+                                        )
+                                    },
+                                );
                             }
                         }
                     }),
@@ -575,7 +578,9 @@ impl<F> FnGraph<F> {
                             predecessor_counts[child_fn_id.index()] -= 1;
                             if predecessor_counts[child_fn_id.index()] == 0 {
                                 if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
-                                    fn_ready_tx.try_send(child_fn_id).unwrap_or_else(|e| {
+                                    fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
+                                        #[cfg_attr(coverage_nightly, no_coverage)]
+                                        |e| {
                                         panic!(
                                             "Failed to queue function `{}`. Cause: {}",
                                             fn_id.index(),
@@ -1281,6 +1286,25 @@ mod tests {
     use crate::{Edge, FnGraphBuilder, FnId};
 
     #[test]
+    fn clone() {
+        let mut fn_graph = FnGraph::<u32>::new();
+        fn_graph.add_node(0);
+
+        let fn_graph_clone = fn_graph.clone();
+
+        assert_eq!(fn_graph, fn_graph_clone);
+    }
+
+    #[test]
+    fn debug() {
+        let mut fn_graph = FnGraph::<u32>::new();
+        fn_graph.add_node(0);
+
+        let debug_str = format!("{fn_graph:?}");
+        assert!(debug_str.starts_with("FnGraph {"));
+    }
+
+    #[test]
     fn new_returns_empty_graph() {
         let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
@@ -1577,7 +1601,13 @@ mod tests {
         async fn stream_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph.stream().for_each(|_f| async {}).await;
+            fn_graph
+                .stream()
+                .for_each(
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async {},
+                )
+                .await;
         }
 
         #[tokio::test]
@@ -1611,7 +1641,13 @@ mod tests {
         async fn stream_rev_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph.stream_rev().for_each(|_f| async {}).await;
+            fn_graph
+                .stream_rev()
+                .for_each(
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async {},
+                )
+                .await;
         }
 
         #[tokio::test]
@@ -1647,7 +1683,13 @@ mod tests {
         async fn fold_async_returns_when_graph_is_empty() {
             let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph.fold_async((), |(), _f| Box::pin(async {})).await;
+            fn_graph
+                .fold_async(
+                    (),
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |(), _f| Box::pin(async {}),
+                )
+                .await;
         }
 
         #[tokio::test]
@@ -1682,7 +1724,11 @@ mod tests {
             let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .fold_rev_async((), |(), _f| Box::pin(async {}))
+                .fold_rev_async(
+                    (),
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |(), _f| Box::pin(async {}),
+                )
                 .await;
         }
 
@@ -1718,7 +1764,13 @@ mod tests {
         async fn for_each_concurrent_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph.for_each_concurrent(None, |_f| async {}).await;
+            fn_graph
+                .for_each_concurrent(
+                    None,
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async {},
+                )
+                .await;
         }
 
         #[tokio::test]
@@ -1755,7 +1807,13 @@ mod tests {
         async fn for_each_concurrent_rev_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph.for_each_concurrent_rev(None, |_f| async {}).await;
+            fn_graph
+                .for_each_concurrent_rev(
+                    None,
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async {},
+                )
+                .await;
         }
 
         #[tokio::test]
@@ -1793,7 +1851,11 @@ mod tests {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .try_for_each_concurrent(None, |_f| async { Ok::<_, ()>(()) })
+                .try_for_each_concurrent(
+                    None,
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async { Ok::<_, ()>(()) },
+                )
                 .await
                 .map_err(|_| ())
         }
@@ -1946,7 +2008,11 @@ mod tests {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .try_for_each_concurrent_rev(None, |_f| async { Ok::<_, ()>(()) })
+                .try_for_each_concurrent_rev(
+                    None,
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async { Ok::<_, ()>(()) },
+                )
                 .await
                 .map_err(|_| ())
         }
@@ -2435,7 +2501,11 @@ mod tests {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
-                .try_for_each_concurrent_control(None, |_f| async { ControlFlow::Continue(()) })
+                .try_for_each_concurrent_control(
+                    None,
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async { ControlFlow::Continue(()) },
+                )
                 .await;
         }
 
@@ -2578,7 +2648,11 @@ mod tests {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
-                .try_for_each_concurrent_control_rev(None, |_f| async { ControlFlow::Continue(()) })
+                .try_for_each_concurrent_control_rev(
+                    None,
+                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    |_f| async { ControlFlow::Continue(()) },
+                )
                 .await;
         }
 
@@ -3229,6 +3303,7 @@ mod tests {
         struct TestError(&'static str);
 
         impl fmt::Display for TestError {
+            #[cfg_attr(coverage_nightly, no_coverage)]
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 self.0.fmt(f)
             }
