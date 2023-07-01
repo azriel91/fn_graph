@@ -1,5 +1,13 @@
 # Changelog
 
+## unreleased
+
+* Add `FnGraph::try_for_each_concurrent_control`.
+* Add `FnGraph::try_for_each_concurrent_control_rev`.
+* Add `FnGraph::try_for_each_concurrent_control_mut`.
+* Add `FnGraph::try_for_each_concurrent_control_mut_rev`.
+
+
 ## 0.8.3 (2023-05-27)
 
 * Implement `PartialEq for FnGraph`.
