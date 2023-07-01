@@ -596,7 +596,7 @@ impl<F> FnGraph<F> {
     /// order, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned. The return
-    /// value is a `Vec<E>` as it is possible for multiple tasks to return
+    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
     /// errors.
     ///
     /// The first argument is an optional `limit` on the number of concurrent
@@ -626,7 +626,7 @@ impl<F> FnGraph<F> {
     /// topological order, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned. The return
-    /// value is a `Vec<E>` as it is possible for multiple tasks to return
+    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
     /// errors.
     ///
     /// The first argument is an optional `limit` on the number of concurrent
@@ -650,6 +650,94 @@ impl<F> FnGraph<F> {
     {
         self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Reverse)
             .await
+    }
+
+    /// Runs the provided logic over the functions concurrently in topological
+    /// order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn try_for_each_concurrent_control<'f, FnTryForEach, Fut>(
+        &'f self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+    ) -> ControlFlow<(), ()>
+    where
+        FnTryForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = ControlFlow<(), ()>> + 'f,
+    {
+        let result = self
+            .try_for_each_concurrent_internal(
+                limit,
+                |f| {
+                    let fut = fn_try_for_each(f);
+                    async move {
+                        match fut.await {
+                            ControlFlow::Continue(()) => Result::Ok(()),
+                            ControlFlow::Break(()) => Result::Err(()),
+                        }
+                    }
+                },
+                IterDirection::Forward,
+            )
+            .await;
+        match result {
+            Result::Ok(()) => ControlFlow::Continue(()),
+            Result::Err(_) => ControlFlow::Break(()),
+        }
+    }
+
+    /// Runs the provided logic over the functions concurrently in reverse
+    /// topological order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn try_for_each_concurrent_control_rev<'f, FnTryForEach, Fut>(
+        &'f self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+    ) -> ControlFlow<(), ()>
+    where
+        FnTryForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = ControlFlow<(), ()>> + 'f,
+    {
+        let result = self
+            .try_for_each_concurrent_internal(
+                limit,
+                |f| {
+                    let fut = fn_try_for_each(f);
+                    async move {
+                        match fut.await {
+                            ControlFlow::Continue(()) => Result::Ok(()),
+                            ControlFlow::Break(()) => Result::Err(()),
+                        }
+                    }
+                },
+                IterDirection::Reverse,
+            )
+            .await;
+        match result {
+            Result::Ok(()) => ControlFlow::Continue(()),
+            Result::Err(_) => ControlFlow::Break(()),
+        }
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
@@ -754,7 +842,7 @@ impl<F> FnGraph<F> {
     /// order, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned. The return
-    /// value is a `Vec<E>` as it is possible for multiple tasks to return
+    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
     /// errors.
     ///
     /// The first argument is an optional `limit` on the number of concurrent
@@ -784,7 +872,7 @@ impl<F> FnGraph<F> {
     /// topological order, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned. The return
-    /// value is a `Vec<E>` as it is possible for multiple tasks to return
+    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
     /// errors.
     ///
     /// The first argument is an optional `limit` on the number of concurrent
@@ -808,6 +896,94 @@ impl<F> FnGraph<F> {
     {
         self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, IterDirection::Reverse)
             .await
+    }
+
+    /// Runs the provided logic over the functions concurrently in topological
+    /// order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn try_for_each_concurrent_control_mut<FnTryForEach, Fut>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+    ) -> ControlFlow<(), ()>
+    where
+        FnTryForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = ControlFlow<(), ()>>,
+    {
+        let result = self
+            .try_for_each_concurrent_mut_internal(
+                limit,
+                |f| {
+                    let fut = fn_try_for_each(f);
+                    async move {
+                        match fut.await {
+                            ControlFlow::Continue(()) => Result::Ok(()),
+                            ControlFlow::Break(()) => Result::Err(()),
+                        }
+                    }
+                },
+                IterDirection::Forward,
+            )
+            .await;
+        match result {
+            Result::Ok(()) => ControlFlow::Continue(()),
+            Result::Err(_) => ControlFlow::Break(()),
+        }
+    }
+
+    /// Runs the provided logic over the functions concurrently in topological
+    /// order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(feature = "async")]
+    pub async fn try_for_each_concurrent_control_mut_rev<FnTryForEach, Fut>(
+        &mut self,
+        limit: impl Into<Option<usize>>,
+        fn_try_for_each: FnTryForEach,
+    ) -> ControlFlow<(), ()>
+    where
+        FnTryForEach: Fn(&mut F) -> Fut,
+        Fut: Future<Output = ControlFlow<(), ()>>,
+    {
+        let result = self
+            .try_for_each_concurrent_mut_internal(
+                limit,
+                |f| {
+                    let fut = fn_try_for_each(f);
+                    async move {
+                        match fut.await {
+                            ControlFlow::Continue(()) => Result::Ok(()),
+                            ControlFlow::Break(()) => Result::Err(()),
+                        }
+                    }
+                },
+                IterDirection::Reverse,
+            )
+            .await;
+        match result {
+            Result::Ok(()) => ControlFlow::Continue(()),
+            Result::Err(_) => ControlFlow::Break(()),
+        }
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
@@ -1379,7 +1555,7 @@ mod tests {
 
     #[cfg(feature = "async")]
     mod async_tests {
-        use std::fmt;
+        use std::{fmt, ops::ControlFlow};
 
         use daggy::WouldCycle;
         use futures::{future::BoxFuture, stream, Future, FutureExt, StreamExt};
@@ -1389,8 +1565,7 @@ mod tests {
             time::{self, Duration, Instant},
         };
 
-        use super::super::FnGraph;
-        use crate::{Edge, FnGraphBuilder};
+        use crate::{Edge, FnGraph, FnGraphBuilder};
 
         macro_rules! sleep_duration {
             () => {
@@ -2246,6 +2421,556 @@ mod tests {
                 [TestError("b"), TestError("c")],
                 result.unwrap_err().as_slice()
             );
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
+                .try_for_each_concurrent_control(None, |_f| async { ControlFlow::Continue(()) })
+                .await;
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_runs_fns_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent_control(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        let _ = fut.await;
+                        ControlFlow::Continue(())
+                    }
+                }),
+            )
+            .await;
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_gracefully_ends_when_one_function_returns_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent_control(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "a" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_gracefully_ends_when_one_function_returns_failure_variation()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(130),
+                fn_graph.try_for_each_concurrent_control(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "c" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_gracefully_ends_when_multiple_functions_return_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(130),
+                fn_graph.try_for_each_concurrent_control(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            "c" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_rev_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
+                .try_for_each_concurrent_control_rev(None, |_f| async { ControlFlow::Continue(()) })
+                .await;
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_rev_runs_fns_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        let _ = fut.await;
+                        ControlFlow::Continue(())
+                    }
+                }),
+            )
+            .await;
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_one_function_returns_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "e" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_multiple_functions_return_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            "c" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_runs_fns_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent_control_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        let _ = fut.await;
+                        ControlFlow::Continue(())
+                    }
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_one_function_returns_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent_control_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "a" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_one_function_returns_failure_variation()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(130),
+                fn_graph.try_for_each_concurrent_control_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "c" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_multiple_functions_return_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(130),
+                fn_graph.try_for_each_concurrent_control_mut(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            "c" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("f", seq_rx.try_recv().unwrap());
+            assert_eq!("a", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_rev_runs_fns_concurrently_mut()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        let _ = fut.await;
+                        ControlFlow::Continue(())
+                    }
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_one_function_returns_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(70),
+                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "e" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
+            assert_eq!("e", seq_rx.try_recv().unwrap());
+            assert_eq!("d", seq_rx.try_recv().unwrap());
+            assert_eq!("b", seq_rx.try_recv().unwrap());
+            assert_eq!("c", seq_rx.try_recv().unwrap());
+            assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_multiple_functions_return_failure()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+                Duration::from_millis(150),
+                Duration::from_millis(190),
+                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            "c" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
+                        }
+                    }
+                }),
+            )
+            .await;
+
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
             assert_eq!("b", seq_rx.try_recv().unwrap());
