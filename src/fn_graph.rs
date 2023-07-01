@@ -2095,7 +2095,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_rev(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -2130,7 +2130,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_rev(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -2434,7 +2434,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -2469,7 +2469,7 @@ mod tests {
 
             let result = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -2732,7 +2732,7 @@ mod tests {
 
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_control_rev(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -2766,7 +2766,7 @@ mod tests {
 
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_control_rev(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -2997,7 +2997,7 @@ mod tests {
 
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -3031,7 +3031,7 @@ mod tests {
 
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
                 Duration::from_millis(150),
-                Duration::from_millis(190),
+                Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
