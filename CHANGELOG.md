@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.8.4 (2023-07-01)
 
 * Add `FnGraph::try_for_each_concurrent_control`.
 * Add `FnGraph::try_for_each_concurrent_control_rev`.
