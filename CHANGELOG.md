@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.8.5 (2023-09-16)
 
 * Update dependency versions.
 * Update coverage attribute due to `cargo-llvm-cov` upgrade.
