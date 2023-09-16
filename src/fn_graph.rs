@@ -159,7 +159,7 @@ impl<F> FnGraph<F> {
                         if predecessor_counts[child_fn_id.index()] == 0 {
                             if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
                                 fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
-                                    #[cfg_attr(coverage_nightly, no_coverage)]
+                                    #[cfg_attr(coverage_nightly, coverage(off))]
                                     |e| {
                                         panic!(
                                             "Failed to queue function `{}`. Cause: {}",
@@ -579,7 +579,7 @@ impl<F> FnGraph<F> {
                             if predecessor_counts[child_fn_id.index()] == 0 {
                                 if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
                                     fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
-                                        #[cfg_attr(coverage_nightly, no_coverage)]
+                                        #[cfg_attr(coverage_nightly, coverage(off))]
                                         |e| {
                                         panic!(
                                             "Failed to queue function `{}`. Cause: {}",
@@ -1604,7 +1604,7 @@ mod tests {
             fn_graph
                 .stream()
                 .for_each(
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
                 )
                 .await;
@@ -1644,7 +1644,7 @@ mod tests {
             fn_graph
                 .stream_rev()
                 .for_each(
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
                 )
                 .await;
@@ -1686,7 +1686,7 @@ mod tests {
             fn_graph
                 .fold_async(
                     (),
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |(), _f| Box::pin(async {}),
                 )
                 .await;
@@ -1726,7 +1726,7 @@ mod tests {
             fn_graph
                 .fold_rev_async(
                     (),
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |(), _f| Box::pin(async {}),
                 )
                 .await;
@@ -1767,7 +1767,7 @@ mod tests {
             fn_graph
                 .for_each_concurrent(
                     None,
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
                 )
                 .await;
@@ -1810,7 +1810,7 @@ mod tests {
             fn_graph
                 .for_each_concurrent_rev(
                     None,
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
                 )
                 .await;
@@ -1853,7 +1853,7 @@ mod tests {
             fn_graph
                 .try_for_each_concurrent(
                     None,
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { Ok::<_, ()>(()) },
                 )
                 .await
@@ -2010,7 +2010,7 @@ mod tests {
             fn_graph
                 .try_for_each_concurrent_rev(
                     None,
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { Ok::<_, ()>(()) },
                 )
                 .await
@@ -2503,7 +2503,7 @@ mod tests {
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
                 .try_for_each_concurrent_control(
                     None,
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { ControlFlow::Continue(()) },
                 )
                 .await;
@@ -2650,7 +2650,7 @@ mod tests {
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
                 .try_for_each_concurrent_control_rev(
                     None,
-                    #[cfg_attr(coverage_nightly, no_coverage)]
+                    #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { ControlFlow::Continue(()) },
                 )
                 .await;
@@ -3303,7 +3303,7 @@ mod tests {
         struct TestError(&'static str);
 
         impl fmt::Display for TestError {
-            #[cfg_attr(coverage_nightly, no_coverage)]
+            #[cfg_attr(coverage_nightly, coverage(off))]
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 self.0.fmt(f)
             }
