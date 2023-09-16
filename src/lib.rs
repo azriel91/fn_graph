@@ -1,4 +1,4 @@
-#![cfg_attr(coverage_nightly, feature(no_coverage))]
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 //! Dynamically managed function graph execution.
 //!
@@ -20,9 +20,9 @@
 //! fn_graph = "0.8.1"
 //!
 //! # Integrate with `fn_meta` and/or `resman`
-//! fn_graph = { version = "0.8.4", features = ["fn_meta"] }
-//! fn_graph = { version = "0.8.4", features = ["resman"] }
-//! fn_graph = { version = "0.8.4", features = ["fn_meta", "resman"] }
+//! fn_graph = { version = "0.8.5", features = ["fn_meta"] }
+//! fn_graph = { version = "0.8.5", features = ["resman"] }
+//! fn_graph = { version = "0.8.5", features = ["fn_meta", "resman"] }
 //! ```
 //!
 //! # Rationale

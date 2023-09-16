@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.5 (2023-09-16)
+
+* Update dependency versions.
+* Update coverage attribute due to `cargo-llvm-cov` upgrade.
+
+
 ## 0.8.4 (2023-07-01)
 
 * Add `FnGraph::try_for_each_concurrent_control`.
