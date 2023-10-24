@@ -26,6 +26,14 @@ use tokio::sync::{
 #[cfg(feature = "async")]
 use crate::{EdgeCounts, FnRef};
 
+#[cfg(feature = "interruptible")]
+use interruptible::{
+    interrupt_strategy::{FinishCurrent, PollNextN},
+    interruptibility::Interruptibility,
+    InterruptStrategy, InterruptStrategyT, InterruptibleStream, InterruptibleStreamExt,
+    StreamOutcome, StreamOutcomeNRemaining,
+};
+
 /// Directed acyclic graph of functions.
 ///
 /// Besides the `iter_insertion*` function, all iteration functions run using
@@ -255,8 +263,14 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let queuer = Self::fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        );
 
         let fns_remaining = graph_structure.node_count();
         let graph = &mut self.graph;
@@ -320,8 +334,14 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Forward)
-            .await
+        self.for_each_concurrent_internal(
+            limit,
+            fn_for_each,
+            IterDirection::Forward,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
     }
 
     /// Runs the provided logic over the functions concurrently in reverse
@@ -345,8 +365,14 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Reverse)
-            .await
+        self.for_each_concurrent_internal(
+            limit,
+            fn_for_each,
+            IterDirection::Reverse,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
@@ -356,6 +382,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
         iter_direction: IterDirection,
+        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
     ) where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
@@ -379,8 +406,14 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let queuer = Self::fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+        );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
@@ -441,8 +474,14 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(limit, fn_for_each, IterDirection::Forward)
-            .await
+        self.for_each_concurrent_mut_internal(
+            limit,
+            fn_for_each,
+            IterDirection::Forward,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
     }
 
     /// Runs the provided logic over the functions concurrently in reverse
@@ -465,17 +504,24 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(limit, fn_for_each, IterDirection::Reverse)
-            .await
+        self.for_each_concurrent_mut_internal(
+            limit,
+            fn_for_each,
+            IterDirection::Reverse,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn for_each_concurrent_mut_internal<FnForEach, Fut>(
+    async fn for_each_concurrent_mut_internal<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
         iter_direction: IterDirection,
+        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
     ) where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
@@ -498,8 +544,14 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let queuer = Self::fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+        );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
@@ -550,51 +602,102 @@ impl<F> FnGraph<F> {
     /// Sends IDs of function whose predecessors have been executed to
     /// `fn_ready_tx`.
     #[cfg(feature = "async")]
-    async fn fn_ready_queuer(
+    async fn fn_ready_queuer<'f>(
         graph_structure: &Dag<(), Edge, FnIdInner>,
         predecessor_counts: Vec<usize>,
         mut fn_done_rx: Receiver<FnId>,
         fn_ready_tx: Sender<FnId>,
+        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
     ) {
         let fns_remaining = graph_structure.node_count();
         let mut fn_ready_tx = Some(fn_ready_tx);
         if fns_remaining == 0 {
             fn_ready_tx.take();
         }
-        stream::poll_fn(move |context| fn_done_rx.poll_recv(context))
-            .fold(
-                (fns_remaining, predecessor_counts, fn_ready_tx),
-                move |(mut fns_remaining, mut predecessor_counts, mut fn_ready_tx), fn_id| async move {
-                    // Close `fn_ready_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_ready_tx.take();
-                    }
+        let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
 
-                    graph_structure
-                        .children(fn_id)
-                        .iter(graph_structure)
-                        .for_each(|(_edge_id, child_fn_id)| {
-                            predecessor_counts[child_fn_id.index()] -= 1;
-                            if predecessor_counts[child_fn_id.index()] == 0 {
-                                if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
-                                    fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
-                                        #[cfg_attr(coverage_nightly, coverage(off))]
-                                        |e| {
-                                        panic!(
-                                            "Failed to queue function `{}`. Cause: {}",
-                                            fn_id.index(),
-                                            e
-                                        )
-                                    });
-                                }
+        #[cfg(not(feature = "interruptible"))]
+        let queuer_stream_state = QueuerStreamState {
+            fns_remaining,
+            predecessor_counts,
+            fn_ready_tx,
+        };
+
+        #[cfg(not(feature = "interruptible"))]
+        let _queuer_stream_state = queuer_stream_fold::<daggy::NodeIndex<FnIdInner>>(
+            stream,
+            queuer_stream_state,
+            graph_structure,
+            std::convert::identity,
+        )
+        .await;
+
+        #[cfg(feature = "interruptible")]
+        match interruptibility {
+            Interruptibility::NonInterruptible => {
+                let queuer_stream_state = QueuerStreamState {
+                    fns_remaining,
+                    predecessor_counts,
+                    fn_ready_tx,
+                };
+                let _queuer_stream_state =
+                    queuer_stream_fold(stream, queuer_stream_state, graph_structure).await;
+            }
+            Interruptibility::Interruptible {
+                interrupt_rx,
+                interrupt_strategy,
+            } => match interrupt_strategy {
+                InterruptStrategy::FinishCurrent => {
+                    let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
+                        fns_remaining,
+                        predecessor_counts,
+                        fn_ready_tx,
+                        stream_outcome: None,
+                    };
+                    let _queuer_stream_state_interruptible = queuer_stream_fold_interruptible::<
+                        StreamOutcome<daggy::NodeIndex<FnIdInner>>,
+                        _,
+                        FinishCurrent,
+                    >(
+                        stream.interruptible_with(interrupt_rx, FinishCurrent),
+                        queuer_stream_state_interruptible,
+                        graph_structure,
+                        |stream_outcome| match stream_outcome {
+                            StreamOutcome::InterruptBeforePoll => None,
+                            StreamOutcome::InterruptDuringPoll(fn_id)
+                            | StreamOutcome::NoInterrupt(fn_id) => Some(*fn_id),
+                        },
+                    )
+                    .await;
+                }
+                InterruptStrategy::PollNextN(n) => {
+                    let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
+                        fns_remaining,
+                        predecessor_counts,
+                        fn_ready_tx,
+                        stream_outcome: None,
+                    };
+                    let _queuer_stream_state_interruptible = queuer_stream_fold_interruptible::<
+                        StreamOutcomeNRemaining<daggy::NodeIndex<FnIdInner>>,
+                        _,
+                        PollNextN,
+                    >(
+                        stream.interruptible_with(interrupt_rx, PollNextN(n)),
+                        queuer_stream_state_interruptible,
+                        graph_structure,
+                        |stream_outcome_n_remaining| match stream_outcome_n_remaining {
+                            StreamOutcomeNRemaining::InterruptBeforePoll => None,
+                            StreamOutcomeNRemaining::InterruptDuringPoll {
+                                value: fn_id,
+                                n_remaining: _,
                             }
-                        });
-
-                    (fns_remaining, predecessor_counts, fn_ready_tx)
-                },
-            )
-            .await;
+                            | StreamOutcomeNRemaining::NoInterrupt(fn_id) => Some(*fn_id),
+                        },
+                    )
+                    .await;
+                }
+            },
+        };
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -623,8 +726,50 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Forward)
-            .await
+        self.try_for_each_concurrent_internal(
+            limit,
+            fn_try_for_each,
+            IterDirection::Forward,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
+    }
+
+    /// Runs the provided logic over the functions concurrently in topological
+    /// order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned. The return
+    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
+    /// errors.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(all(feature = "async", feature = "interruptible"))]
+    pub async fn try_for_each_concurrent_interruptible<'f, E, FnTryForEach, Fut>(
+        &'f self,
+        limit: impl Into<Option<usize>>,
+        interruptibility: Interruptibility<'f>,
+        fn_try_for_each: FnTryForEach,
+    ) -> Result<(), Vec<E>>
+    where
+        E: Debug,
+        FnTryForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = Result<(), E>> + 'f,
+    {
+        self.try_for_each_concurrent_internal(
+            limit,
+            fn_try_for_each,
+            IterDirection::Forward,
+            interruptibility,
+        )
+        .await
     }
 
     /// Runs the provided logic over the functions concurrently in reverse
@@ -653,8 +798,50 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Reverse)
-            .await
+        self.try_for_each_concurrent_internal(
+            limit,
+            fn_try_for_each,
+            IterDirection::Reverse,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
+    }
+
+    /// Runs the provided logic over the functions concurrently in reverse
+    /// topological order, stopping when an error is encountered.
+    ///
+    /// This gracefully waits until all produced tasks have returned. The return
+    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
+    /// errors.
+    ///
+    /// The first argument is an optional `limit` on the number of concurrent
+    /// futures. If this limit is not `None`, no more than `limit` futures will
+    /// be run concurrently. The `limit` argument is of type
+    /// `Into<Option<usize>>`, and so can be provided as either `None`,
+    /// `Some(10)`, or just `10`.
+    ///
+    /// **Note:** a limit of zero is interpreted as no limit at all, and will
+    /// have the same result as passing in `None`.
+    #[cfg(all(feature = "async", feature = "interruptible"))]
+    pub async fn try_for_each_concurrent_interruptible_rev<'f, E, FnTryForEach, Fut>(
+        &'f self,
+        limit: impl Into<Option<usize>>,
+        interruptibility: Interruptibility<'f>,
+        fn_try_for_each: FnTryForEach,
+    ) -> Result<(), Vec<E>>
+    where
+        E: Debug,
+        FnTryForEach: Fn(&'f F) -> Fut,
+        Fut: Future<Output = Result<(), E>> + 'f,
+    {
+        self.try_for_each_concurrent_internal(
+            limit,
+            fn_try_for_each,
+            IterDirection::Reverse,
+            interruptibility,
+        )
+        .await
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -693,6 +880,8 @@ impl<F> FnGraph<F> {
                     }
                 },
                 IterDirection::Forward,
+                #[cfg(feature = "interruptible")]
+                Interruptibility::NonInterruptible,
             )
             .await;
         match result {
@@ -737,6 +926,8 @@ impl<F> FnGraph<F> {
                     }
                 },
                 IterDirection::Reverse,
+                #[cfg(feature = "interruptible")]
+                Interruptibility::NonInterruptible,
             )
             .await;
         match result {
@@ -752,6 +943,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
         iter_direction: IterDirection,
+        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
@@ -777,8 +969,14 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let queuer = Self::fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+        );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
@@ -869,8 +1067,14 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, IterDirection::Forward)
-            .await
+        self.try_for_each_concurrent_mut_internal(
+            limit,
+            fn_try_for_each,
+            IterDirection::Forward,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
     }
 
     /// Runs the provided logic over the functions concurrently in reverse
@@ -899,8 +1103,14 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, IterDirection::Reverse)
-            .await
+        self.try_for_each_concurrent_mut_internal(
+            limit,
+            fn_try_for_each,
+            IterDirection::Reverse,
+            #[cfg(feature = "interruptible")]
+            Interruptibility::NonInterruptible,
+        )
+        .await
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -939,6 +1149,8 @@ impl<F> FnGraph<F> {
                     }
                 },
                 IterDirection::Forward,
+                #[cfg(feature = "interruptible")]
+                Interruptibility::NonInterruptible,
             )
             .await;
         match result {
@@ -983,6 +1195,8 @@ impl<F> FnGraph<F> {
                     }
                 },
                 IterDirection::Reverse,
+                #[cfg(feature = "interruptible")]
+                Interruptibility::NonInterruptible,
             )
             .await;
         match result {
@@ -998,6 +1212,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
         iter_direction: IterDirection,
+        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'_>,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
@@ -1023,8 +1238,14 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let queuer = Self::fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+        );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
@@ -1190,6 +1411,148 @@ impl<F> FnGraph<F> {
         use daggy::petgraph::visit::IntoNodeReferences;
         self.graph.node_references()
     }
+}
+
+/// Polls the queuer stream until completed.
+async fn queuer_stream_fold(
+    stream: stream::PollFn<
+        impl FnMut(&mut std::task::Context) -> Poll<Option<daggy::NodeIndex<FnIdInner>>>,
+    >,
+    queuer_stream_state: QueuerStreamState,
+    graph_structure: &Dag<(), Edge, FnIdInner>,
+) -> QueuerStreamState {
+    stream
+        .fold(
+            queuer_stream_state,
+            move |queuer_stream_state, fn_id| async move {
+                let QueuerStreamState {
+                    mut fns_remaining,
+                    mut predecessor_counts,
+                    mut fn_ready_tx,
+                } = queuer_stream_state;
+
+                // Close `fn_ready_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    fn_ready_tx.take();
+                }
+
+                graph_structure
+                    .children(fn_id)
+                    .iter(graph_structure)
+                    .for_each(|(_edge_id, child_fn_id)| {
+                        predecessor_counts[child_fn_id.index()] -= 1;
+                        if predecessor_counts[child_fn_id.index()] == 0 {
+                            if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
+                                fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
+                                    #[cfg_attr(coverage_nightly, coverage(off))]
+                                    |e| {
+                                        panic!(
+                                            "Failed to queue function `{}`. Cause: {}",
+                                            fn_id.index(),
+                                            e
+                                        )
+                                    },
+                                );
+                            }
+                        }
+                    });
+
+                QueuerStreamState {
+                    fns_remaining,
+                    predecessor_counts,
+                    fn_ready_tx,
+                }
+            },
+        )
+        .await
+}
+
+/// Polls the queuer stream until completed or interrupted.
+#[cfg(feature = "interruptible")]
+async fn queuer_stream_fold_interruptible<'stream, StrmOutcome, S, IS>(
+    stream: InterruptibleStream<'stream, S, IS>,
+    queuer_stream_state: QueuerStreamStateInterruptible<StrmOutcome>,
+    graph_structure: &Dag<(), Edge, FnIdInner>,
+    fn_id_from_outcome: fn(&StrmOutcome) -> Option<daggy::NodeIndex<FnIdInner>>,
+) -> QueuerStreamStateInterruptible<StrmOutcome>
+where
+    S: Stream<Item = daggy::NodeIndex<FnIdInner>>,
+    InterruptibleStream<'stream, S, IS>: Stream<Item = StrmOutcome>,
+    IS: InterruptStrategyT,
+{
+    stream
+        .fold(
+            queuer_stream_state,
+            move |queuer_stream_state, stream_outcome| async move {
+                let QueuerStreamStateInterruptible {
+                    mut fns_remaining,
+                    mut predecessor_counts,
+                    mut fn_ready_tx,
+                    stream_outcome: _,
+                } = queuer_stream_state;
+
+                // Close `fn_ready_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    fn_ready_tx.take();
+                }
+
+                let fn_id = fn_id_from_outcome(&stream_outcome);
+
+                if let Some(fn_id) = fn_id {
+                    graph_structure
+                        .children(fn_id)
+                        .iter(graph_structure)
+                        .for_each(|(_edge_id, child_fn_id)| {
+                            predecessor_counts[child_fn_id.index()] -= 1;
+                            if predecessor_counts[child_fn_id.index()] == 0 {
+                                if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
+                                    fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
+                                        #[cfg_attr(coverage_nightly, coverage(off))]
+                                        |e| {
+                                            panic!(
+                                                "Failed to queue function `{}`. Cause: {}",
+                                                fn_id.index(),
+                                                e
+                                            )
+                                        },
+                                    );
+                                }
+                            }
+                        });
+                }
+
+                QueuerStreamStateInterruptible {
+                    fns_remaining,
+                    predecessor_counts,
+                    fn_ready_tx,
+                    stream_outcome: Some(stream_outcome),
+                }
+            },
+        )
+        .await
+}
+
+struct QueuerStreamState {
+    /// Number of functions in the graph remaining to execute.
+    fns_remaining: usize,
+    /// Number of predecessors each function in the graph is waiting on.
+    predecessor_counts: Vec<usize>,
+    /// Channel sender for function IDs that are ready to run.
+    fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+}
+
+#[cfg(feature = "interruptible")]
+struct QueuerStreamStateInterruptible<StrmOutcome> {
+    /// Number of functions in the graph remaining to execute.
+    fns_remaining: usize,
+    /// Number of predecessors each function in the graph is waiting on.
+    predecessor_counts: Vec<usize>,
+    /// Channel sender for function IDs that are ready to run.
+    fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+    /// Interruptible stream outcome.
+    stream_outcome: Option<StrmOutcome>,
 }
 
 impl<F> Default for FnGraph<F> {
