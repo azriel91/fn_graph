@@ -126,3 +126,14 @@ pub use crate::fn_ref::FnRef;
 
 #[cfg(feature = "async")]
 mod fn_ref;
+
+#[cfg(all(feature = "async", feature = "interruptible"))]
+pub use crate::{
+    fn_graph_stream_outcome::{FnGraphStreamOutcome, FnGraphStreamOutcomeState},
+    fn_graph_stream_progress::{FnGraphStreamProgress, FnGraphStreamProgressState},
+};
+
+#[cfg(all(feature = "async", feature = "interruptible"))]
+mod fn_graph_stream_outcome;
+#[cfg(all(feature = "async", feature = "interruptible"))]
+mod fn_graph_stream_progress;

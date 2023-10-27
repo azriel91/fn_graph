@@ -26,7 +26,9 @@ use tokio::sync::{
 #[cfg(feature = "async")]
 use crate::{EdgeCounts, FnRef};
 
-#[cfg(feature = "interruptible")]
+#[cfg(all(feature = "async", feature = "interruptible"))]
+use crate::{FnGraphStreamOutcome, FnGraphStreamProgress, FnGraphStreamProgressState};
+#[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
     interrupt_strategy::{FinishCurrent, PollNextN},
     interruptibility::Interruptibility,
@@ -608,40 +610,30 @@ impl<F> FnGraph<F> {
         mut fn_done_rx: Receiver<FnId>,
         fn_ready_tx: Sender<FnId>,
         #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
-    ) {
+    ) -> FnGraphStreamOutcome {
         let fns_remaining = graph_structure.node_count();
+        let mut fn_graph_stream_progress = FnGraphStreamProgress::with_capacity(fns_remaining);
+
         let mut fn_ready_tx = Some(fn_ready_tx);
         if fns_remaining == 0 {
+            fn_graph_stream_progress.state = FnGraphStreamProgressState::Finished;
             fn_ready_tx.take();
         }
         let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
 
         #[cfg(not(feature = "interruptible"))]
-        let queuer_stream_state = QueuerStreamState {
-            fns_remaining,
-            predecessor_counts,
-            fn_ready_tx,
-        };
-
-        #[cfg(not(feature = "interruptible"))]
-        let _queuer_stream_state = queuer_stream_fold::<daggy::NodeIndex<FnIdInner>>(
-            stream,
-            queuer_stream_state,
-            graph_structure,
-            std::convert::identity,
-        )
-        .await;
+        {
+            let queuer_stream_state =
+                QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
+            queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
+        }
 
         #[cfg(feature = "interruptible")]
         match interruptibility {
             Interruptibility::NonInterruptible => {
-                let queuer_stream_state = QueuerStreamState {
-                    fns_remaining,
-                    predecessor_counts,
-                    fn_ready_tx,
-                };
-                let _queuer_stream_state =
-                    queuer_stream_fold(stream, queuer_stream_state, graph_structure).await;
+                let queuer_stream_state =
+                    QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
+                queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
             }
             Interruptibility::Interruptible {
                 interrupt_rx,
@@ -652,9 +644,9 @@ impl<F> FnGraph<F> {
                         fns_remaining,
                         predecessor_counts,
                         fn_ready_tx,
-                        stream_outcome: None,
+                        fn_graph_stream_progress,
                     };
-                    let _queuer_stream_state_interruptible = queuer_stream_fold_interruptible::<
+                    queuer_stream_fold_interruptible::<
                         StreamOutcome<daggy::NodeIndex<FnIdInner>>,
                         _,
                         FinishCurrent,
@@ -663,21 +655,21 @@ impl<F> FnGraph<F> {
                         queuer_stream_state_interruptible,
                         graph_structure,
                         |stream_outcome| match stream_outcome {
-                            StreamOutcome::InterruptBeforePoll => None,
-                            StreamOutcome::InterruptDuringPoll(fn_id)
-                            | StreamOutcome::NoInterrupt(fn_id) => Some(*fn_id),
+                            StreamOutcome::InterruptBeforePoll => (None, true),
+                            StreamOutcome::InterruptDuringPoll(fn_id) => (Some(fn_id), true),
+                            StreamOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
                         },
                     )
-                    .await;
+                    .await
                 }
                 InterruptStrategy::PollNextN(n) => {
                     let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
                         fns_remaining,
                         predecessor_counts,
                         fn_ready_tx,
-                        stream_outcome: None,
+                        fn_graph_stream_progress,
                     };
-                    let _queuer_stream_state_interruptible = queuer_stream_fold_interruptible::<
+                    queuer_stream_fold_interruptible::<
                         StreamOutcomeNRemaining<daggy::NodeIndex<FnIdInner>>,
                         _,
                         PollNextN,
@@ -686,18 +678,18 @@ impl<F> FnGraph<F> {
                         queuer_stream_state_interruptible,
                         graph_structure,
                         |stream_outcome_n_remaining| match stream_outcome_n_remaining {
-                            StreamOutcomeNRemaining::InterruptBeforePoll => None,
+                            StreamOutcomeNRemaining::InterruptBeforePoll => (None, true),
                             StreamOutcomeNRemaining::InterruptDuringPoll {
                                 value: fn_id,
                                 n_remaining: _,
-                            }
-                            | StreamOutcomeNRemaining::NoInterrupt(fn_id) => Some(*fn_id),
+                            } => (Some(fn_id), true),
+                            StreamOutcomeNRemaining::NoInterrupt(fn_id) => (Some(fn_id), false),
                         },
                     )
-                    .await;
+                    .await
                 }
             },
-        };
+        }
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -1420,8 +1412,8 @@ async fn queuer_stream_fold(
     >,
     queuer_stream_state: QueuerStreamState,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-) -> QueuerStreamState {
-    stream
+) -> FnGraphStreamOutcome {
+    let queuer_stream_state = stream
         .fold(
             queuer_stream_state,
             move |queuer_stream_state, fn_id| async move {
@@ -1429,6 +1421,7 @@ async fn queuer_stream_fold(
                     mut fns_remaining,
                     mut predecessor_counts,
                     mut fn_ready_tx,
+                    mut fn_ids_processed,
                 } = queuer_stream_state;
 
                 // Close `fn_ready_rx` when all functions have been executed,
@@ -1436,6 +1429,9 @@ async fn queuer_stream_fold(
                 if fns_remaining == 0 {
                     fn_ready_tx.take();
                 }
+
+                // Mark `fn_id` as processed.
+                fn_ids_processed.push(fn_id);
 
                 graph_structure
                     .children(fn_id)
@@ -1462,76 +1458,112 @@ async fn queuer_stream_fold(
                     fns_remaining,
                     predecessor_counts,
                     fn_ready_tx,
+                    fn_ids_processed,
                 }
             },
         )
-        .await
+        .await;
+
+    let QueuerStreamState {
+        fn_ids_processed, ..
+    } = queuer_stream_state;
+
+    FnGraphStreamOutcome::finished_with(fn_ids_processed)
 }
 
 /// Polls the queuer stream until completed or interrupted.
 #[cfg(feature = "interruptible")]
 async fn queuer_stream_fold_interruptible<'stream, StrmOutcome, S, IS>(
     stream: InterruptibleStream<'stream, S, IS>,
-    queuer_stream_state: QueuerStreamStateInterruptible<StrmOutcome>,
+    queuer_stream_state_interruptible: QueuerStreamStateInterruptible,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-    fn_id_from_outcome: fn(&StrmOutcome) -> Option<daggy::NodeIndex<FnIdInner>>,
-) -> QueuerStreamStateInterruptible<StrmOutcome>
+    fn_id_from_outcome: fn(StrmOutcome) -> (Option<daggy::NodeIndex<FnIdInner>>, bool),
+) -> FnGraphStreamOutcome
 where
     S: Stream<Item = daggy::NodeIndex<FnIdInner>>,
     InterruptibleStream<'stream, S, IS>: Stream<Item = StrmOutcome>,
     IS: InterruptStrategyT,
 {
-    stream
+    let queuer_stream_state_interruptible = stream
         .fold(
-            queuer_stream_state,
-            move |queuer_stream_state, stream_outcome| async move {
+            queuer_stream_state_interruptible,
+            move |queuer_stream_state_interruptible, stream_outcome| async move {
                 let QueuerStreamStateInterruptible {
                     mut fns_remaining,
                     mut predecessor_counts,
                     mut fn_ready_tx,
-                    stream_outcome: _,
-                } = queuer_stream_state;
+                    mut fn_graph_stream_progress,
+                } = queuer_stream_state_interruptible;
+
+                let FnGraphStreamProgress {
+                    state,
+                    ref mut fn_ids_processed,
+                    ref mut fn_ids_not_processed,
+                } = &mut fn_graph_stream_progress;
 
                 // Close `fn_ready_rx` when all functions have been executed,
                 fns_remaining -= 1;
                 if fns_remaining == 0 {
+                    *state = FnGraphStreamProgressState::Finished;
                     fn_ready_tx.take();
+                } else {
+                    *state = FnGraphStreamProgressState::InProgress;
                 }
 
-                let fn_id = fn_id_from_outcome(&stream_outcome);
+                let (fn_id, interrupted) = fn_id_from_outcome(stream_outcome);
 
                 if let Some(fn_id) = fn_id {
-                    graph_structure
-                        .children(fn_id)
-                        .iter(graph_structure)
-                        .for_each(|(_edge_id, child_fn_id)| {
-                            predecessor_counts[child_fn_id.index()] -= 1;
-                            if predecessor_counts[child_fn_id.index()] == 0 {
-                                if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
-                                    fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
-                                        #[cfg_attr(coverage_nightly, coverage(off))]
-                                        |e| {
-                                            panic!(
-                                                "Failed to queue function `{}`. Cause: {}",
-                                                fn_id.index(),
-                                                e
-                                            )
-                                        },
-                                    );
+                    // Mark `fn_id` as processed.
+                    fn_ids_processed.push(fn_id);
+                    if let Some(fn_id_pos) = fn_ids_not_processed
+                        .iter()
+                        .position(|fn_id_iter| fn_id == *fn_id_iter)
+                    {
+                        fn_ids_not_processed.remove(fn_id_pos);
+                    }
+
+                    if !interrupted {
+                        graph_structure
+                            .children(fn_id)
+                            .iter(graph_structure)
+                            .for_each(|(_edge_id, child_fn_id)| {
+                                predecessor_counts[child_fn_id.index()] -= 1;
+                                if predecessor_counts[child_fn_id.index()] == 0 {
+                                    if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
+                                        fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
+                                            #[cfg_attr(coverage_nightly, coverage(off))]
+                                            |e| {
+                                                panic!(
+                                                    "Failed to queue function `{}`. Cause: {}",
+                                                    fn_id.index(),
+                                                    e
+                                                )
+                                            },
+                                        );
+                                    }
                                 }
-                            }
-                        });
+                            });
+                    }
+                } else {
+                    todo!("");
                 }
 
                 QueuerStreamStateInterruptible {
                     fns_remaining,
                     predecessor_counts,
                     fn_ready_tx,
-                    stream_outcome: Some(stream_outcome),
+                    fn_graph_stream_progress,
                 }
             },
         )
-        .await
+        .await;
+
+    let QueuerStreamStateInterruptible {
+        fn_graph_stream_progress,
+        ..
+    } = queuer_stream_state_interruptible;
+
+    FnGraphStreamOutcome::from(fn_graph_stream_progress)
 }
 
 struct QueuerStreamState {
@@ -1541,18 +1573,35 @@ struct QueuerStreamState {
     predecessor_counts: Vec<usize>,
     /// Channel sender for function IDs that are ready to run.
     fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+    /// IDs of the items that are processed.
+    fn_ids_processed: Vec<FnId>,
+}
+
+impl QueuerStreamState {
+    fn new(
+        fns_remaining: usize,
+        predecessor_counts: Vec<usize>,
+        fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+    ) -> Self {
+        Self {
+            fns_remaining,
+            predecessor_counts,
+            fn_ready_tx,
+            fn_ids_processed: Vec::with_capacity(fns_remaining),
+        }
+    }
 }
 
 #[cfg(feature = "interruptible")]
-struct QueuerStreamStateInterruptible<StrmOutcome> {
+struct QueuerStreamStateInterruptible {
     /// Number of functions in the graph remaining to execute.
     fns_remaining: usize,
     /// Number of predecessors each function in the graph is waiting on.
     predecessor_counts: Vec<usize>,
     /// Channel sender for function IDs that are ready to run.
     fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
-    /// Interruptible stream outcome.
-    stream_outcome: Option<StrmOutcome>,
+    /// State during processing a `FnGraph` stream.
+    fn_graph_stream_progress: FnGraphStreamProgress,
 }
 
 impl<F> Default for FnGraph<F> {
