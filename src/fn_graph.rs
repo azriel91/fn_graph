@@ -27,7 +27,10 @@ use tokio::sync::{
 use crate::{EdgeCounts, FnRef};
 
 #[cfg(all(feature = "async", feature = "interruptible"))]
-use crate::{FnGraphStreamOutcome, FnGraphStreamProgress, FnGraphStreamProgressState};
+use crate::{
+    FnGraphStreamOutcome, FnGraphStreamOutcomeState, FnGraphStreamProgress,
+    FnGraphStreamProgressState,
+};
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
     interrupt_strategy::{FinishCurrent, PollNextN},
@@ -1053,7 +1056,7 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -1089,7 +1092,7 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -1119,14 +1122,15 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_mut<FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_mut<E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(FnGraphStreamOutcome, Vec<E>), FnGraphStreamOutcome>
     where
+        E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>>,
+        Fut: Future<Output = ControlFlow<E, ()>>,
     {
         let result = self
             .try_for_each_concurrent_mut_internal(
@@ -1136,7 +1140,7 @@ impl<F> FnGraph<F> {
                     async move {
                         match fut.await {
                             ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
+                            ControlFlow::Break(e) => Result::Err(e),
                         }
                     }
                 },
@@ -1146,8 +1150,13 @@ impl<F> FnGraph<F> {
             )
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
@@ -1165,14 +1174,15 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_mut_rev<FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_mut_rev<E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(FnGraphStreamOutcome, Vec<E>), FnGraphStreamOutcome>
     where
+        E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>>,
+        Fut: Future<Output = ControlFlow<E, ()>>,
     {
         let result = self
             .try_for_each_concurrent_mut_internal(
@@ -1182,7 +1192,7 @@ impl<F> FnGraph<F> {
                     async move {
                         match fut.await {
                             ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
+                            ControlFlow::Break(e) => Result::Err(e),
                         }
                     }
                 },
@@ -1192,8 +1202,13 @@ impl<F> FnGraph<F> {
             )
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
@@ -1205,7 +1220,7 @@ impl<F> FnGraph<F> {
         fn_try_for_each: FnTryForEach,
         iter_direction: IterDirection,
         #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'_>,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -1292,16 +1307,16 @@ impl<F> FnGraph<F> {
             drop(result_tx);
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
             .await;
 
         if results.is_empty() {
-            Ok(())
+            Ok(fn_graph_stream_outcome)
         } else {
-            Err(results)
+            Err((fn_graph_stream_outcome, results))
         }
     }
 
