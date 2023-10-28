@@ -24,12 +24,9 @@ use tokio::sync::{
 };
 
 #[cfg(feature = "async")]
-use crate::{EdgeCounts, FnGraphStreamOpts, FnRef, StreamOrder};
-
-#[cfg(all(feature = "async", feature = "interruptible"))]
 use crate::{
-    FnGraphStreamOutcome, FnGraphStreamOutcomeState, FnGraphStreamProgress,
-    FnGraphStreamProgressState,
+    EdgeCounts, FnGraphStreamOpts, FnGraphStreamOutcome, FnGraphStreamOutcomeState,
+    FnGraphStreamProgress, FnGraphStreamProgressState, FnRef, StreamOrder,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
@@ -141,6 +138,15 @@ impl<F> FnGraph<F> {
             ref edge_counts,
         } = self;
 
+        let FnGraphStreamOpts {
+            stream_order,
+            // Currently we don't support interruptibility for `stream_internal` as this alters the
+            // return type of the stream.
+            #[cfg(feature = "interruptible")]
+                interruptibility: _,
+            marker: _,
+        } = opts;
+
         let (
             graph_structure,
             mut predecessor_counts,
@@ -152,7 +158,7 @@ impl<F> FnGraph<F> {
             graph_structure,
             graph_structure_rev,
             edge_counts,
-            opts.stream_order,
+            stream_order,
         );
 
         let mut fns_remaining = graph_structure.node_count();
@@ -224,11 +230,16 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    pub async fn fold_async<Seed, FnFold>(
+        &mut self,
+        seed: Seed,
+        fn_fold: FnFold,
+    ) -> FnGraphStreamOutcome<Option<Seed>>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
-        self.fold_async_internal(seed, fn_fold, false).await
+        self.fold_async_internal(seed, FnGraphStreamOpts::default(), fn_fold)
+            .await
     }
 
     /// Returns a stream of function references in topological order.
@@ -236,41 +247,56 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async_rev<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    pub async fn fold_async_with<'f, Seed, FnFold>(
+        &mut self,
+        seed: Seed,
+        opts: FnGraphStreamOpts<'f>,
+        fn_fold: FnFold,
+    ) -> FnGraphStreamOutcome<Option<Seed>>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
-        self.fold_async_internal(seed, fn_fold, true).await
+        self.fold_async_internal(seed, opts, fn_fold).await
     }
 
     #[cfg(feature = "async")]
-    async fn fold_async_internal<Seed, FnFold>(
-        &mut self,
+    async fn fold_async_internal<'f, Seed, FnFold>(
+        &'f mut self,
         seed: Seed,
+        opts: FnGraphStreamOpts<'f>,
         fn_fold: FnFold,
-        reverse: bool,
-    ) -> Seed
+    ) -> FnGraphStreamOutcome<Option<Seed>>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
-        let (graph_structure, predecessor_counts) = if reverse {
-            (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            )
-        } else {
-            (&self.graph_structure, self.edge_counts.incoming().to_vec())
-        };
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+        let FnGraph {
+            ref mut graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(&graph_structure)
-            .iter(&graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        let FnGraphStreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+            marker: _,
+        } = opts;
+
+        let (
+            graph_structure,
+            predecessor_counts,
+            fn_ready_tx,
+            mut fn_ready_rx,
+            fn_done_tx,
+            fn_done_rx,
+        ) = stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            stream_order,
+        );
 
         let queuer = fn_ready_queuer(
             graph_structure,
@@ -278,22 +304,31 @@ impl<F> FnGraph<F> {
             fn_done_rx,
             fn_ready_tx,
             #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
+            interruptibility,
         );
 
         let fns_remaining = graph_structure.node_count();
-        let graph = &mut self.graph;
         let mut fn_done_tx = Some(fn_done_tx);
         if fns_remaining == 0 {
             fn_done_tx.take();
         }
+        let fold_stream_state = FoldStreamState {
+            graph,
+            fns_remaining,
+            fn_done_tx,
+            seed,
+            fn_fold,
+        };
         let scheduler = async move {
-            let (_graph, _fns_remaining, _fn_done_tx, seed, _fn_fold) = stream::poll_fn(
-                move |context| fn_ready_rx.poll_recv(context),
-            )
-            .fold(
-                (graph, fns_remaining, fn_done_tx, seed, fn_fold),
-                |(graph, mut fns_remaining, mut fn_done_tx, seed, mut fn_fold), fn_id| async move {
+            let fold_stream_state = stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                    let FoldStreamState {
+                        graph,
+                        mut fns_remaining,
+                        mut fn_done_tx,
+                        seed,
+                        mut fn_fold,
+                    } = fold_stream_state;
                     let r#fn = &mut graph[fn_id];
                     let seed = fn_fold(seed, r#fn).await;
                     if let Some(fn_done_tx) = fn_done_tx.as_ref() {
@@ -309,17 +344,30 @@ impl<F> FnGraph<F> {
                         fn_done_tx.take();
                     }
 
-                    (graph, fns_remaining, fn_done_tx, seed, fn_fold)
-                },
-            )
-            .await;
+                    FoldStreamState {
+                        graph,
+                        fns_remaining,
+                        fn_done_tx,
+                        seed,
+                        fn_fold,
+                    }
+                })
+                .await;
+
+            let FoldStreamState {
+                graph: _,
+                fns_remaining: _,
+                fn_done_tx: _,
+                seed,
+                fn_fold: _,
+            } = fold_stream_state;
 
             seed
         };
 
-        let (_, seed) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, seed) = futures::join!(queuer, scheduler);
 
-        seed
+        fn_graph_stream_outcome.map(|()| Some(seed))
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -448,7 +496,8 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> FnGraphStreamOutcome<()>
+    where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
@@ -473,7 +522,8 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> FnGraphStreamOutcome<()>
+    where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
@@ -488,7 +538,8 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> FnGraphStreamOutcome<()>
+    where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
@@ -542,7 +593,8 @@ impl<F> FnGraph<F> {
                 .await;
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        fn_graph_stream_outcome
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -818,7 +870,7 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
+    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -853,7 +905,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
+    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -881,7 +933,7 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(FnGraphStreamOutcome, Vec<E>), FnGraphStreamOutcome>
+    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -928,7 +980,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(FnGraphStreamOutcome, Vec<E>), FnGraphStreamOutcome>
+    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -963,7 +1015,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
+    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -1170,6 +1222,7 @@ impl<F> FnGraph<F> {
     }
 }
 
+#[cfg(feature = "async")]
 fn stream_setup_init<'f>(
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
@@ -1210,6 +1263,7 @@ fn stream_setup_init<'f>(
     )
 }
 
+#[cfg(feature = "async")]
 fn stream_setup_init_concurrent<'f>(
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
@@ -1218,7 +1272,7 @@ fn stream_setup_init_concurrent<'f>(
 ) -> (
     &'f Dag<(), Edge, FnIdInner>,
     Receiver<daggy::NodeIndex<FnIdInner>>,
-    impl Future<Output = FnGraphStreamOutcome> + 'f,
+    impl Future<Output = FnGraphStreamOutcome<()>> + 'f,
     RwLock<Option<Sender<daggy::NodeIndex<FnIdInner>>>>,
     RwLock<usize>,
 ) {
@@ -1267,9 +1321,9 @@ async fn fn_ready_queuer<'f>(
     mut fn_done_rx: Receiver<FnId>,
     fn_ready_tx: Sender<FnId>,
     #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
-) -> FnGraphStreamOutcome {
+) -> FnGraphStreamOutcome<()> {
     let fns_remaining = graph_structure.node_count();
-    let mut fn_graph_stream_progress = FnGraphStreamProgress::with_capacity(fns_remaining);
+    let mut fn_graph_stream_progress = FnGraphStreamProgress::with_capacity((), fns_remaining);
 
     let mut fn_ready_tx = Some(fn_ready_tx);
     if fns_remaining == 0 {
@@ -1350,13 +1404,14 @@ async fn fn_ready_queuer<'f>(
 }
 
 /// Polls the queuer stream until completed.
+#[cfg(feature = "async")]
 async fn queuer_stream_fold(
     stream: stream::PollFn<
         impl FnMut(&mut std::task::Context) -> Poll<Option<daggy::NodeIndex<FnIdInner>>>,
     >,
     queuer_stream_state: QueuerStreamState,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-) -> FnGraphStreamOutcome {
+) -> FnGraphStreamOutcome<()> {
     let queuer_stream_state = stream
         .fold(
             queuer_stream_state,
@@ -1412,17 +1467,17 @@ async fn queuer_stream_fold(
         fn_ids_processed, ..
     } = queuer_stream_state;
 
-    FnGraphStreamOutcome::finished_with(fn_ids_processed)
+    FnGraphStreamOutcome::finished_with((), fn_ids_processed)
 }
 
 /// Polls the queuer stream until completed or interrupted.
-#[cfg(feature = "interruptible")]
+#[cfg(all(feature = "async", feature = "interruptible"))]
 async fn queuer_stream_fold_interruptible<'stream, StrmOutcome, S, IS>(
     stream: InterruptibleStream<'stream, S, IS>,
     queuer_stream_state_interruptible: QueuerStreamStateInterruptible,
     graph_structure: &Dag<(), Edge, FnIdInner>,
     fn_id_from_outcome: fn(StrmOutcome) -> (Option<daggy::NodeIndex<FnIdInner>>, bool),
-) -> FnGraphStreamOutcome
+) -> FnGraphStreamOutcome<()>
 where
     S: Stream<Item = daggy::NodeIndex<FnIdInner>>,
     InterruptibleStream<'stream, S, IS>: Stream<Item = StrmOutcome>,
@@ -1440,6 +1495,7 @@ where
                 } = queuer_stream_state_interruptible;
 
                 let FnGraphStreamProgress {
+                    value: (),
                     state,
                     ref mut fn_ids_processed,
                     ref mut fn_ids_not_processed,
@@ -1510,6 +1566,21 @@ where
     FnGraphStreamOutcome::from(fn_graph_stream_progress)
 }
 
+#[cfg(feature = "async")]
+struct FoldStreamState<'f, F, Seed, FnFold> {
+    /// Graph of functions.
+    graph: &'f mut Dag<F, Edge, FnIdInner>,
+    /// Number of functions in the graph remaining to execute.
+    fns_remaining: usize,
+    /// Channel sender for function IDs that have been run.
+    fn_done_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+    /// Cumulative value after each fold.
+    seed: Seed,
+    /// Function to run each iteration.
+    fn_fold: FnFold,
+}
+
+#[cfg(feature = "async")]
 struct QueuerStreamState {
     /// Number of functions in the graph remaining to execute.
     fns_remaining: usize,
@@ -1521,6 +1592,7 @@ struct QueuerStreamState {
     fn_ids_processed: Vec<FnId>,
 }
 
+#[cfg(feature = "async")]
 impl QueuerStreamState {
     fn new(
         fns_remaining: usize,
@@ -1536,7 +1608,7 @@ impl QueuerStreamState {
     }
 }
 
-#[cfg(feature = "interruptible")]
+#[cfg(all(feature = "async", feature = "interruptible"))]
 struct QueuerStreamStateInterruptible {
     /// Number of functions in the graph remaining to execute.
     fns_remaining: usize,
@@ -1545,7 +1617,7 @@ struct QueuerStreamStateInterruptible {
     /// Channel sender for function IDs that are ready to run.
     fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
     /// State during processing a `FnGraph` stream.
-    fn_graph_stream_progress: FnGraphStreamProgress,
+    fn_graph_stream_progress: FnGraphStreamProgress<()>,
 }
 
 impl<F> Default for FnGraph<F> {
@@ -2069,12 +2141,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fold_async_rev_returns_when_graph_is_empty() {
+        async fn fold_async_with_returns_when_graph_is_empty() {
             let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .fold_async_rev(
+                .fold_async_with(
                     (),
+                    FnGraphStreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |(), _f| Box::pin(async {}),
                 )
@@ -2082,7 +2155,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fold_async_rev_runs_fns_in_dep_rev_order_mut()
+        async fn fold_async_with_runs_fns_in_dep_rev_order_mut()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2092,12 +2165,16 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
-                fn_graph.fold_async_rev(resources, |resources, f| {
-                    Box::pin(async move {
-                        f.call_mut(&resources).await;
-                        resources
-                    })
-                }),
+                fn_graph.fold_async_with(
+                    resources,
+                    FnGraphStreamOpts::new().rev(),
+                    |resources, f| {
+                        Box::pin(async move {
+                            f.call_mut(&resources).await;
+                            resources
+                        })
+                    },
+                ),
             )
             .await;
 

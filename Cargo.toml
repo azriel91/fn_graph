@@ -31,7 +31,7 @@ resman = { version = "0.17.0", features = ["debug", "fn_res", "fn_res_mut", "fn_
 tokio = { version = "1.32.0", features = ["macros", "rt", "sync", "time"] }
 
 [features]
-default = ["async", "interruptible"]
+default = ["async"]
 async = ["futures"]
 interruptible = ["dep:interruptible"]
 fn_res = ["resman?/fn_res"]

@@ -2,7 +2,9 @@ use crate::FnId;
 
 /// State during processing a `FnGraph` stream, and the IDs that are processed.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FnGraphStreamProgress {
+pub struct FnGraphStreamProgress<T> {
+    /// The value of the outcome.
+    pub(crate) value: T,
     /// State during processing a `FnGraph` stream.
     pub(crate) state: FnGraphStreamProgressState,
     /// IDs of the items that are processed.
@@ -11,10 +13,11 @@ pub struct FnGraphStreamProgress {
     pub(crate) fn_ids_not_processed: Vec<FnId>,
 }
 
-impl FnGraphStreamProgress {
+impl<T> FnGraphStreamProgress<T> {
     /// Returns an empty `FnGraphStreamOutcome`.
-    pub fn empty() -> Self {
+    pub fn empty(value: T) -> Self {
         Self {
+            value,
             state: FnGraphStreamProgressState::NotStarted,
             fn_ids_processed: Vec::new(),
             fn_ids_not_processed: Vec::new(),
@@ -22,16 +25,25 @@ impl FnGraphStreamProgress {
     }
 
     /// Returns an empty `FnGraphStreamProgress` with the given capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_capacity(value: T, capacity: usize) -> Self {
         Self {
+            value,
             state: FnGraphStreamProgressState::NotStarted,
             fn_ids_processed: Vec::with_capacity(capacity),
             fn_ids_not_processed: Vec::with_capacity(capacity),
         }
     }
 
-    pub fn state(&self) -> FnGraphStreamProgressState {
-        self.state
+    pub fn into_value(self) -> T {
+        self.value
+    }
+
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    pub fn value_mut(&mut self) -> &mut T {
+        &mut self.value
     }
 
     pub fn fn_ids_processed(&self) -> &[FnId] {

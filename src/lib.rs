@@ -135,13 +135,13 @@ mod fn_ref;
 #[cfg(feature = "async")]
 mod stream_order;
 
-#[cfg(all(feature = "async", feature = "interruptible"))]
+#[cfg(feature = "async")]
 pub use crate::{
     fn_graph_stream_outcome::{FnGraphStreamOutcome, FnGraphStreamOutcomeState},
     fn_graph_stream_progress::{FnGraphStreamProgress, FnGraphStreamProgressState},
 };
 
-#[cfg(all(feature = "async", feature = "interruptible"))]
+#[cfg(feature = "async")]
 mod fn_graph_stream_outcome;
-#[cfg(all(feature = "async", feature = "interruptible"))]
+#[cfg(feature = "async")]
 mod fn_graph_stream_progress;
