@@ -6,7 +6,7 @@ pub struct StreamProgress<T> {
     /// The value of the outcome.
     pub(crate) value: T,
     /// State during processing a `FnGraph` stream.
-    pub(crate) state: FnGraphStreamProgressState,
+    pub(crate) state: StreamProgressState,
     /// IDs of the items that are processed.
     pub(crate) fn_ids_processed: Vec<FnId>,
     /// IDs of the items that are yet to be processed.
@@ -18,7 +18,7 @@ impl<T> StreamProgress<T> {
     pub fn empty(value: T) -> Self {
         Self {
             value,
-            state: FnGraphStreamProgressState::NotStarted,
+            state: StreamProgressState::NotStarted,
             fn_ids_processed: Vec::new(),
             fn_ids_not_processed: Vec::new(),
         }
@@ -28,7 +28,7 @@ impl<T> StreamProgress<T> {
     pub fn with_capacity(value: T, capacity: usize) -> Self {
         Self {
             value,
-            state: FnGraphStreamProgressState::NotStarted,
+            state: StreamProgressState::NotStarted,
             fn_ids_processed: Vec::with_capacity(capacity),
             fn_ids_not_processed: Vec::with_capacity(capacity),
         }
@@ -57,7 +57,7 @@ impl<T> StreamProgress<T> {
 
 /// State during processing a `FnGraph` stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FnGraphStreamProgressState {
+pub enum StreamProgressState {
     /// The stream is not started, so no items are processed.
     NotStarted,
     /// Whether the stream was interruptible.

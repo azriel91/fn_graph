@@ -1,4 +1,4 @@
-use crate::{FnGraphStreamProgressState, FnId, StreamProgress};
+use crate::{FnId, StreamProgress, StreamProgressState};
 
 /// How a `FnGraph` stream operation ended and IDs that were processed.
 ///
@@ -115,12 +115,12 @@ pub enum StreamOutcomeState {
     Finished,
 }
 
-impl From<FnGraphStreamProgressState> for StreamOutcomeState {
-    fn from(fn_graph_stream_progress_state: FnGraphStreamProgressState) -> Self {
+impl From<StreamProgressState> for StreamOutcomeState {
+    fn from(fn_graph_stream_progress_state: StreamProgressState) -> Self {
         match fn_graph_stream_progress_state {
-            FnGraphStreamProgressState::NotStarted => Self::NotStarted,
-            FnGraphStreamProgressState::InProgress => Self::Interrupted,
-            FnGraphStreamProgressState::Finished => Self::Finished,
+            StreamProgressState::NotStarted => Self::NotStarted,
+            StreamProgressState::InProgress => Self::Interrupted,
+            StreamProgressState::Finished => Self::Finished,
         }
     }
 }

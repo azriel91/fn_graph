@@ -27,8 +27,8 @@ use tokio::sync::{
 
 #[cfg(feature = "async")]
 use crate::{
-    EdgeCounts, FnGraphStreamProgressState, FnRef, StreamOpts, StreamOrder, StreamOutcome,
-    StreamOutcomeState, StreamProgress,
+    EdgeCounts, FnRef, StreamOpts, StreamOrder, StreamOutcome, StreamOutcomeState, StreamProgress,
+    StreamProgressState,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
@@ -1345,7 +1345,7 @@ async fn fn_ready_queuer<'f>(
 
     let mut fn_ready_tx = Some(fn_ready_tx);
     if fns_remaining == 0 {
-        fn_graph_stream_progress.state = FnGraphStreamProgressState::Finished;
+        fn_graph_stream_progress.state = StreamProgressState::Finished;
         fn_ready_tx.take();
     }
     let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
@@ -1524,10 +1524,10 @@ where
                 // Close `fn_ready_rx` when all functions have been executed,
                 fns_remaining -= 1;
                 if fns_remaining == 0 {
-                    *state = FnGraphStreamProgressState::Finished;
+                    *state = StreamProgressState::Finished;
                     fn_ready_tx.take();
                 } else {
-                    *state = FnGraphStreamProgressState::InProgress;
+                    *state = StreamProgressState::InProgress;
                 }
 
                 let (fn_id, interrupted) = fn_id_from_outcome(stream_outcome);
