@@ -2,7 +2,7 @@ use crate::FnId;
 
 /// State during processing a `FnGraph` stream, and the IDs that are processed.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FnGraphStreamProgress<T> {
+pub struct StreamProgress<T> {
     /// The value of the outcome.
     pub(crate) value: T,
     /// State during processing a `FnGraph` stream.
@@ -13,7 +13,7 @@ pub struct FnGraphStreamProgress<T> {
     pub(crate) fn_ids_not_processed: Vec<FnId>,
 }
 
-impl<T> FnGraphStreamProgress<T> {
+impl<T> StreamProgress<T> {
     /// Returns an empty `FnGraphStreamOutcome`.
     pub fn empty(value: T) -> Self {
         Self {

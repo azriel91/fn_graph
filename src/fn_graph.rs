@@ -27,8 +27,8 @@ use tokio::sync::{
 
 #[cfg(feature = "async")]
 use crate::{
-    EdgeCounts, FnGraphStreamOutcomeState, FnGraphStreamProgress, FnGraphStreamProgressState,
-    FnRef, StreamOpts, StreamOrder, StreamOutcome,
+    EdgeCounts, FnGraphStreamOutcomeState, FnGraphStreamProgressState, FnRef, StreamOpts,
+    StreamOrder, StreamOutcome, StreamProgress,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
@@ -1341,7 +1341,7 @@ async fn fn_ready_queuer<'f>(
     #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
 ) -> StreamOutcome<()> {
     let fns_remaining = graph_structure.node_count();
-    let mut fn_graph_stream_progress = FnGraphStreamProgress::with_capacity((), fns_remaining);
+    let mut fn_graph_stream_progress = StreamProgress::with_capacity((), fns_remaining);
 
     let mut fn_ready_tx = Some(fn_ready_tx);
     if fns_remaining == 0 {
@@ -1514,7 +1514,7 @@ where
                     mut fn_graph_stream_progress,
                 } = queuer_stream_state_interruptible;
 
-                let FnGraphStreamProgress {
+                let StreamProgress {
                     value: (),
                     state,
                     ref mut fn_ids_processed,
@@ -1654,7 +1654,7 @@ struct QueuerStreamStateInterruptible {
     /// Channel sender for function IDs that are ready to run.
     fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
     /// State during processing a `FnGraph` stream.
-    fn_graph_stream_progress: FnGraphStreamProgress<()>,
+    fn_graph_stream_progress: StreamProgress<()>,
 }
 
 impl<F> Default for FnGraph<F> {

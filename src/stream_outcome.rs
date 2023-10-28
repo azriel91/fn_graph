@@ -1,4 +1,4 @@
-use crate::{FnGraphStreamProgress, FnGraphStreamProgressState, FnId};
+use crate::{FnGraphStreamProgressState, FnId, StreamProgress};
 
 /// How a `FnGraph` stream operation ended and IDs that were processed.
 ///
@@ -85,9 +85,9 @@ where
     }
 }
 
-impl<T> From<FnGraphStreamProgress<T>> for StreamOutcome<T> {
-    fn from(fn_graph_stream_progress: FnGraphStreamProgress<T>) -> Self {
-        let FnGraphStreamProgress {
+impl<T> From<StreamProgress<T>> for StreamOutcome<T> {
+    fn from(fn_graph_stream_progress: StreamProgress<T>) -> Self {
+        let StreamProgress {
             value,
             state,
             fn_ids_processed,
