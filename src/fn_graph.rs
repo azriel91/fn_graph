@@ -268,7 +268,7 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer = Self::fn_ready_queuer(
+        let queuer = fn_ready_queuer(
             graph_structure,
             predecessor_counts,
             fn_done_rx,
@@ -381,47 +381,21 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        let FnGraphStreamOpts {
-            stream_order,
-            #[cfg(feature = "interruptible")]
-            interruptibility,
-            marker: _,
-        } = opts;
+        let FnGraph {
+            ref graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        let (graph_structure, predecessor_counts) = match stream_order {
-            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            StreamOrder::Reverse => (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            ),
-        };
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+        let (graph_structure, mut fn_ready_rx, queuer, fn_done_tx, fns_remaining) =
+            stream_setup_init(opts, graph_structure, edge_counts, graph_structure_rev);
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(graph_structure)
-            .iter(graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
-
-        let queuer = Self::fn_ready_queuer(
-            graph_structure,
-            predecessor_counts,
-            fn_done_rx,
-            fn_ready_tx,
-            #[cfg(feature = "interruptible")]
-            interruptibility,
-        );
-
-        let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
-        let fns_remaining = graph_structure.node_count();
-        let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
-        let fn_refs = &self.graph;
+        let fn_refs = graph;
 
         if graph_structure.node_count() == 0 {
             fn_done_tx.write().await.take();
@@ -514,48 +488,21 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        let FnGraphStreamOpts {
-            stream_order,
-            #[cfg(feature = "interruptible")]
-            interruptibility,
-            marker: _,
-        } = opts;
+        let FnGraph {
+            ref mut graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        let (graph_structure, predecessor_counts) = match stream_order {
-            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            StreamOrder::Reverse => (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            ),
-        };
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+        let (graph_structure, mut fn_ready_rx, queuer, fn_done_tx, fns_remaining) =
+            stream_setup_init(opts, graph_structure, edge_counts, graph_structure_rev);
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(graph_structure)
-            .iter(graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
-
-        let queuer = Self::fn_ready_queuer(
-            graph_structure,
-            predecessor_counts,
-            fn_done_rx,
-            fn_ready_tx,
-            #[cfg(feature = "interruptible")]
-            interruptibility,
-        );
-
-        let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
-        let fns_remaining = graph_structure.node_count();
-        let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
-        let fn_mut_refs = self
-            .graph
+        let fn_mut_refs = graph
             .node_weights_mut()
             .map(RwLock::new)
             .collect::<Vec<_>>();
@@ -592,97 +539,6 @@ impl<F> FnGraph<F> {
         };
 
         futures::join!(queuer, scheduler);
-    }
-
-    /// Sends IDs of function whose predecessors have been executed to
-    /// `fn_ready_tx`.
-    #[cfg(feature = "async")]
-    async fn fn_ready_queuer<'f>(
-        graph_structure: &Dag<(), Edge, FnIdInner>,
-        predecessor_counts: Vec<usize>,
-        mut fn_done_rx: Receiver<FnId>,
-        fn_ready_tx: Sender<FnId>,
-        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
-    ) -> FnGraphStreamOutcome {
-        let fns_remaining = graph_structure.node_count();
-        let mut fn_graph_stream_progress = FnGraphStreamProgress::with_capacity(fns_remaining);
-
-        let mut fn_ready_tx = Some(fn_ready_tx);
-        if fns_remaining == 0 {
-            fn_graph_stream_progress.state = FnGraphStreamProgressState::Finished;
-            fn_ready_tx.take();
-        }
-        let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
-
-        #[cfg(not(feature = "interruptible"))]
-        {
-            let queuer_stream_state =
-                QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
-            queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
-        }
-
-        #[cfg(feature = "interruptible")]
-        match interruptibility {
-            Interruptibility::NonInterruptible => {
-                let queuer_stream_state =
-                    QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
-                queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
-            }
-            Interruptibility::Interruptible {
-                interrupt_rx,
-                interrupt_strategy,
-            } => match interrupt_strategy {
-                InterruptStrategy::FinishCurrent => {
-                    let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
-                        fns_remaining,
-                        predecessor_counts,
-                        fn_ready_tx,
-                        fn_graph_stream_progress,
-                    };
-                    queuer_stream_fold_interruptible::<
-                        StreamOutcome<daggy::NodeIndex<FnIdInner>>,
-                        _,
-                        FinishCurrent,
-                    >(
-                        stream.interruptible_with(interrupt_rx, FinishCurrent),
-                        queuer_stream_state_interruptible,
-                        graph_structure,
-                        |stream_outcome| match stream_outcome {
-                            StreamOutcome::InterruptBeforePoll => (None, true),
-                            StreamOutcome::InterruptDuringPoll(fn_id) => (Some(fn_id), true),
-                            StreamOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                        },
-                    )
-                    .await
-                }
-                InterruptStrategy::PollNextN(n) => {
-                    let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
-                        fns_remaining,
-                        predecessor_counts,
-                        fn_ready_tx,
-                        fn_graph_stream_progress,
-                    };
-                    queuer_stream_fold_interruptible::<
-                        StreamOutcomeNRemaining<daggy::NodeIndex<FnIdInner>>,
-                        _,
-                        PollNextN,
-                    >(
-                        stream.interruptible_with(interrupt_rx, PollNextN(n)),
-                        queuer_stream_state_interruptible,
-                        graph_structure,
-                        |stream_outcome_n_remaining| match stream_outcome_n_remaining {
-                            StreamOutcomeNRemaining::InterruptBeforePoll => (None, true),
-                            StreamOutcomeNRemaining::InterruptDuringPoll {
-                                value: fn_id,
-                                n_remaining: _,
-                            } => (Some(fn_id), true),
-                            StreamOutcomeNRemaining::NoInterrupt(fn_id) => (Some(fn_id), false),
-                        },
-                    )
-                    .await
-                }
-            },
-        }
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -866,7 +722,7 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer = Self::fn_ready_queuer(
+        let queuer = fn_ready_queuer(
             graph_structure,
             predecessor_counts,
             fn_done_rx,
@@ -1135,7 +991,7 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer = Self::fn_ready_queuer(
+        let queuer = fn_ready_queuer(
             graph_structure,
             predecessor_counts,
             fn_done_rx,
@@ -1307,6 +1163,152 @@ impl<F> FnGraph<F> {
     pub fn iter_insertion_with_indices(&self) -> NodeReferences<F, FnIdInner> {
         use daggy::petgraph::visit::IntoNodeReferences;
         self.graph.node_references()
+    }
+}
+
+fn stream_setup_init<'f>(
+    opts: FnGraphStreamOpts<'f>,
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    edge_counts: &EdgeCounts,
+    graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
+) -> (
+    &'f Dag<(), Edge, FnIdInner>,
+    Receiver<daggy::NodeIndex<FnIdInner>>,
+    impl Future<Output = FnGraphStreamOutcome> + 'f,
+    RwLock<Option<Sender<daggy::NodeIndex<FnIdInner>>>>,
+    RwLock<usize>,
+) {
+    let FnGraphStreamOpts {
+        stream_order,
+        #[cfg(feature = "interruptible")]
+        interruptibility,
+        marker: _,
+    } = opts;
+
+    let (graph_structure, predecessor_counts) = match stream_order {
+        StreamOrder::Forward => (graph_structure, edge_counts.incoming().to_vec()),
+        StreamOrder::Reverse => (graph_structure_rev, edge_counts.outgoing().to_vec()),
+    };
+    let channel_capacity = std::cmp::max(1, graph_structure.node_count());
+    let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
+    let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+
+    // Preload the channel with all of the functions that have no predecessors
+    Topo::new(graph_structure)
+        .iter(graph_structure)
+        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+        .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+        .expect("Failed to preload function with no predecessors.");
+
+    let queuer = fn_ready_queuer(
+        graph_structure,
+        predecessor_counts,
+        fn_done_rx,
+        fn_ready_tx,
+        #[cfg(feature = "interruptible")]
+        interruptibility,
+    );
+
+    let fn_done_tx = RwLock::new(Some(fn_done_tx));
+    let fns_remaining = graph_structure.node_count();
+    let fns_remaining = RwLock::new(fns_remaining);
+    (
+        graph_structure,
+        fn_ready_rx,
+        queuer,
+        fn_done_tx,
+        fns_remaining,
+    )
+}
+
+/// Sends IDs of function whose predecessors have been executed to
+/// `fn_ready_tx`.
+#[cfg(feature = "async")]
+async fn fn_ready_queuer<'f>(
+    graph_structure: &Dag<(), Edge, FnIdInner>,
+    predecessor_counts: Vec<usize>,
+    mut fn_done_rx: Receiver<FnId>,
+    fn_ready_tx: Sender<FnId>,
+    #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
+) -> FnGraphStreamOutcome {
+    let fns_remaining = graph_structure.node_count();
+    let mut fn_graph_stream_progress = FnGraphStreamProgress::with_capacity(fns_remaining);
+
+    let mut fn_ready_tx = Some(fn_ready_tx);
+    if fns_remaining == 0 {
+        fn_graph_stream_progress.state = FnGraphStreamProgressState::Finished;
+        fn_ready_tx.take();
+    }
+    let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
+
+    #[cfg(not(feature = "interruptible"))]
+    {
+        let queuer_stream_state =
+            QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
+        queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
+    }
+
+    #[cfg(feature = "interruptible")]
+    match interruptibility {
+        Interruptibility::NonInterruptible => {
+            let queuer_stream_state =
+                QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
+            queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
+        }
+        Interruptibility::Interruptible {
+            interrupt_rx,
+            interrupt_strategy,
+        } => match interrupt_strategy {
+            InterruptStrategy::FinishCurrent => {
+                let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
+                    fns_remaining,
+                    predecessor_counts,
+                    fn_ready_tx,
+                    fn_graph_stream_progress,
+                };
+                queuer_stream_fold_interruptible::<
+                    StreamOutcome<daggy::NodeIndex<FnIdInner>>,
+                    _,
+                    FinishCurrent,
+                >(
+                    stream.interruptible_with(interrupt_rx, FinishCurrent),
+                    queuer_stream_state_interruptible,
+                    graph_structure,
+                    |stream_outcome| match stream_outcome {
+                        StreamOutcome::InterruptBeforePoll => (None, true),
+                        StreamOutcome::InterruptDuringPoll(fn_id) => (Some(fn_id), true),
+                        StreamOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    },
+                )
+                .await
+            }
+            InterruptStrategy::PollNextN(n) => {
+                let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
+                    fns_remaining,
+                    predecessor_counts,
+                    fn_ready_tx,
+                    fn_graph_stream_progress,
+                };
+                queuer_stream_fold_interruptible::<
+                    StreamOutcomeNRemaining<daggy::NodeIndex<FnIdInner>>,
+                    _,
+                    PollNextN,
+                >(
+                    stream.interruptible_with(interrupt_rx, PollNextN(n)),
+                    queuer_stream_state_interruptible,
+                    graph_structure,
+                    |stream_outcome_n_remaining| match stream_outcome_n_remaining {
+                        StreamOutcomeNRemaining::InterruptBeforePoll => (None, true),
+                        StreamOutcomeNRemaining::InterruptDuringPoll {
+                            value: fn_id,
+                            n_remaining: _,
+                        } => (Some(fn_id), true),
+                        StreamOutcomeNRemaining::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    },
+                )
+                .await
+            }
+        },
     }
 }
 
