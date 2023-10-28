@@ -236,7 +236,7 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_rev_async<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    pub async fn fold_async_rev<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -2069,11 +2069,11 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fold_rev_async_returns_when_graph_is_empty() {
+        async fn fold_async_rev_returns_when_graph_is_empty() {
             let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .fold_rev_async(
+                .fold_async_rev(
                     (),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |(), _f| Box::pin(async {}),
@@ -2082,7 +2082,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fold_rev_async_runs_fns_in_dep_rev_order_mut()
+        async fn fold_async_rev_runs_fns_in_dep_rev_order_mut()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2092,7 +2092,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
-                fn_graph.fold_rev_async(resources, |resources, f| {
+                fn_graph.fold_async_rev(resources, |resources, f| {
                     Box::pin(async move {
                         f.call_mut(&resources).await;
                         resources
