@@ -27,8 +27,8 @@ use tokio::sync::{
 
 #[cfg(feature = "async")]
 use crate::{
-    EdgeCounts, FnGraphStreamOutcomeState, FnGraphStreamProgressState, FnRef, StreamOpts,
-    StreamOrder, StreamOutcome, StreamProgress,
+    EdgeCounts, FnGraphStreamProgressState, FnRef, StreamOpts, StreamOrder, StreamOutcome,
+    StreamOutcomeState, StreamProgress,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
@@ -711,10 +711,10 @@ impl<F> FnGraph<F> {
             .await;
         match result {
             Result::Ok(outcome) => match outcome.state {
-                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
                     ControlFlow::Break((outcome, Vec::new()))
                 }
-                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
             },
             Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
@@ -758,10 +758,10 @@ impl<F> FnGraph<F> {
             .await;
         match result {
             Result::Ok(outcome) => match outcome.state {
-                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
                     ControlFlow::Break((outcome, Vec::new()))
                 }
-                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
             },
             Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
@@ -976,10 +976,10 @@ impl<F> FnGraph<F> {
             .await;
         match result {
             Result::Ok(outcome) => match outcome.state {
-                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
                     ControlFlow::Break((outcome, Vec::new()))
                 }
-                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
             },
             Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
@@ -1023,10 +1023,10 @@ impl<F> FnGraph<F> {
             .await;
         match result {
             Result::Ok(outcome) => match outcome.state {
-                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
                     ControlFlow::Break((outcome, Vec::new()))
                 }
-                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
             },
             Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
@@ -2047,9 +2047,7 @@ mod tests {
             time::{self, Duration, Instant},
         };
 
-        use crate::{
-            Edge, FnGraph, FnGraphBuilder, FnGraphStreamOutcomeState, StreamOpts, StreamOutcome,
-        };
+        use crate::{Edge, FnGraph, FnGraphBuilder, StreamOpts, StreamOutcome, StreamOutcomeState};
 
         macro_rules! sleep_duration {
             () => {
@@ -2324,7 +2322,7 @@ mod tests {
             assert_eq!(
                 StreamOutcome {
                     value: (),
-                    state: FnGraphStreamOutcomeState::Finished,
+                    state: StreamOutcomeState::Finished,
                     fn_ids_processed: Vec::new(),
                     fn_ids_not_processed: Vec::new(),
                 },
@@ -2494,7 +2492,7 @@ mod tests {
             assert_eq!(
                 StreamOutcome {
                     value: (),
-                    state: FnGraphStreamOutcomeState::Finished,
+                    state: StreamOutcomeState::Finished,
                     fn_ids_processed: Vec::new(),
                     fn_ids_not_processed: Vec::new(),
                 },

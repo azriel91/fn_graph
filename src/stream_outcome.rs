@@ -9,7 +9,7 @@ pub struct StreamOutcome<T> {
     /// The value of the outcome.
     pub value: T,
     /// How a `FnGraph` stream operation ended.
-    pub state: FnGraphStreamOutcomeState,
+    pub state: StreamOutcomeState,
     /// IDs of the items that were processed.
     pub fn_ids_processed: Vec<FnId>,
     /// IDs of the items that were not processed.
@@ -21,7 +21,7 @@ impl<T> StreamOutcome<T> {
     pub fn finished_with(value: T, fn_ids_processed: Vec<FnId>) -> Self {
         Self {
             value,
-            state: FnGraphStreamOutcomeState::Finished,
+            state: StreamOutcomeState::Finished,
             fn_ids_processed,
             fn_ids_not_processed: Vec::new(),
         }
@@ -58,7 +58,7 @@ impl<T> StreamOutcome<T> {
         &mut self.value
     }
 
-    pub fn state(&self) -> FnGraphStreamOutcomeState {
+    pub fn state(&self) -> StreamOutcomeState {
         self.state
     }
 
@@ -78,7 +78,7 @@ where
     fn default() -> Self {
         Self {
             value: T::default(),
-            state: FnGraphStreamOutcomeState::NotStarted,
+            state: StreamOutcomeState::NotStarted,
             fn_ids_processed: Vec::new(),
             fn_ids_not_processed: Vec::new(),
         }
@@ -105,7 +105,7 @@ impl<T> From<StreamProgress<T>> for StreamOutcome<T> {
 
 /// How a `FnGraph` stream operation ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FnGraphStreamOutcomeState {
+pub enum StreamOutcomeState {
     /// The stream was not started, so no items were processed.
     NotStarted,
     /// The stream was interrupted during processing.
@@ -115,7 +115,7 @@ pub enum FnGraphStreamOutcomeState {
     Finished,
 }
 
-impl From<FnGraphStreamProgressState> for FnGraphStreamOutcomeState {
+impl From<FnGraphStreamProgressState> for StreamOutcomeState {
     fn from(fn_graph_stream_progress_state: FnGraphStreamProgressState) -> Self {
         match fn_graph_stream_progress_state {
             FnGraphStreamProgressState::NotStarted => Self::NotStarted,

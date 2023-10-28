@@ -137,7 +137,7 @@ mod stream_order;
 
 #[cfg(feature = "async")]
 pub use crate::{
-    stream_outcome::{FnGraphStreamOutcomeState, StreamOutcome},
+    stream_outcome::{StreamOutcome, StreamOutcomeState},
     stream_progress::{FnGraphStreamProgressState, StreamProgress},
 };
 
