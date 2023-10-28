@@ -339,7 +339,7 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, FnGraphStreamOpts::default())
+        self.for_each_concurrent_internal(limit, FnGraphStreamOpts::default(), fn_for_each)
             .await
     }
 
@@ -365,7 +365,7 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, opts)
+        self.for_each_concurrent_internal(limit, opts, fn_for_each)
             .await
     }
 
@@ -374,8 +374,8 @@ impl<F> FnGraph<F> {
     async fn for_each_concurrent_internal<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        fn_for_each: FnForEach,
         opts: FnGraphStreamOpts<'f>,
+        fn_for_each: FnForEach,
     ) where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
@@ -474,7 +474,7 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(limit, fn_for_each, FnGraphStreamOpts::default())
+        self.for_each_concurrent_mut_internal(limit, FnGraphStreamOpts::default(), fn_for_each)
             .await
     }
 
@@ -499,7 +499,7 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(limit, fn_for_each, opts)
+        self.for_each_concurrent_mut_internal(limit, opts, fn_for_each)
             .await
     }
 
@@ -508,8 +508,8 @@ impl<F> FnGraph<F> {
     async fn for_each_concurrent_mut_internal<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        fn_for_each: FnForEach,
         opts: FnGraphStreamOpts<'f>,
+        fn_for_each: FnForEach,
     ) where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
@@ -711,7 +711,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(limit, fn_try_for_each, FnGraphStreamOpts::default())
+        self.try_for_each_concurrent_internal(limit, FnGraphStreamOpts::default(), fn_try_for_each)
             .await
     }
 
@@ -742,7 +742,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(limit, fn_try_for_each, opts)
+        self.try_for_each_concurrent_internal(limit, opts, fn_try_for_each)
             .await
     }
 
@@ -770,19 +770,15 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ControlFlow<(), ()>> + 'f,
     {
         let result = self
-            .try_for_each_concurrent_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
-                        }
+            .try_for_each_concurrent_internal(limit, FnGraphStreamOpts::default(), |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(()) => Result::Err(()),
                     }
-                },
-                FnGraphStreamOpts::default(),
-            )
+                }
+            })
             .await;
         match result {
             Result::Ok(()) => ControlFlow::Continue(()),
@@ -815,19 +811,15 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ControlFlow<(), ()>> + 'f,
     {
         let result = self
-            .try_for_each_concurrent_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
-                        }
+            .try_for_each_concurrent_internal(limit, opts, |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(()) => Result::Err(()),
                     }
-                },
-                opts,
-            )
+                }
+            })
             .await;
         match result {
             Result::Ok(()) => ControlFlow::Continue(()),
@@ -840,8 +832,8 @@ impl<F> FnGraph<F> {
     async fn try_for_each_concurrent_internal<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        fn_try_for_each: FnTryForEach,
         opts: FnGraphStreamOpts<'f>,
+        fn_try_for_each: FnTryForEach,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
@@ -974,8 +966,8 @@ impl<F> FnGraph<F> {
     {
         self.try_for_each_concurrent_mut_internal(
             limit,
-            fn_try_for_each,
             FnGraphStreamOpts::default(),
+            fn_try_for_each,
         )
         .await
     }
@@ -1007,7 +999,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, opts)
+        self.try_for_each_concurrent_mut_internal(limit, opts, fn_try_for_each)
             .await
     }
 
@@ -1036,19 +1028,15 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ControlFlow<E, ()>>,
     {
         let result = self
-            .try_for_each_concurrent_mut_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(e) => Result::Err(e),
-                        }
+            .try_for_each_concurrent_mut_internal(limit, FnGraphStreamOpts::default(), |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
-                },
-                FnGraphStreamOpts::default(),
-            )
+                }
+            })
             .await;
         match result {
             Result::Ok(outcome) => match outcome.state {
@@ -1087,19 +1075,15 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ControlFlow<E, ()>>,
     {
         let result = self
-            .try_for_each_concurrent_mut_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(e) => Result::Err(e),
-                        }
+            .try_for_each_concurrent_mut_internal(limit, opts, |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
-                },
-                opts,
-            )
+                }
+            })
             .await;
         match result {
             Result::Ok(outcome) => match outcome.state {
@@ -1117,8 +1101,8 @@ impl<F> FnGraph<F> {
     async fn try_for_each_concurrent_mut_internal<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        fn_try_for_each: FnTryForEach,
         opts: FnGraphStreamOpts<'f>,
+        fn_try_for_each: FnTryForEach,
     ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
     where
         E: Debug,
