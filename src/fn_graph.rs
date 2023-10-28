@@ -12,6 +12,8 @@ use fixedbitset::FixedBitSet;
 use crate::{Edge, FnId, FnIdInner, Rank};
 
 #[cfg(feature = "async")]
+use daggy::NodeIndex;
+#[cfg(feature = "async")]
 use futures::{
     future::{Future, LocalBoxFuture},
     stream::{self, Stream, StreamExt},
@@ -121,7 +123,7 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub fn stream_rev<'f>(&'f self) -> impl Stream<Item = FnRef<'f, F>> + 'f {
+    pub fn stream_rev(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
         self.stream_internal(FnGraphStreamOpts::default().rev())
     }
 
@@ -147,14 +149,14 @@ impl<F> FnGraph<F> {
             marker: _,
         } = opts;
 
-        let (
+        let StreamSetupInit {
             graph_structure,
             mut predecessor_counts,
             fn_ready_tx,
             mut fn_ready_rx,
             fn_done_tx,
             mut fn_done_rx,
-        ) = stream_setup_init(
+        } = stream_setup_init(
             graph_structure,
             graph_structure_rev,
             edge_counts,
@@ -284,14 +286,14 @@ impl<F> FnGraph<F> {
             marker: _,
         } = opts;
 
-        let (
+        let StreamSetupInit {
             graph_structure,
             predecessor_counts,
             fn_ready_tx,
             mut fn_ready_rx,
             fn_done_tx,
             fn_done_rx,
-        ) = stream_setup_init(
+        } = stream_setup_init(
             graph_structure,
             graph_structure_rev,
             edge_counts,
@@ -444,8 +446,13 @@ impl<F> FnGraph<F> {
             ref edge_counts,
         } = self;
 
-        let (graph_structure, mut fn_ready_rx, queuer, fn_done_tx, fns_remaining) =
-            stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
+        let StreamSetupInitConcurrent {
+            graph_structure,
+            mut fn_ready_rx,
+            queuer,
+            fn_done_tx,
+            fns_remaining,
+        } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
 
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
@@ -555,8 +562,13 @@ impl<F> FnGraph<F> {
             ref edge_counts,
         } = self;
 
-        let (graph_structure, mut fn_ready_rx, queuer, fn_done_tx, fns_remaining) =
-            stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
+        let StreamSetupInitConcurrent {
+            graph_structure,
+            mut fn_ready_rx,
+            queuer,
+            fn_done_tx,
+            fns_remaining,
+        } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
 
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
@@ -1244,14 +1256,7 @@ fn stream_setup_init<'f>(
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
     stream_order: StreamOrder,
-) -> (
-    &'f Dag<(), Edge, FnIdInner>,
-    Vec<usize>,
-    Sender<daggy::NodeIndex<FnIdInner>>,
-    Receiver<daggy::NodeIndex<FnIdInner>>,
-    Sender<daggy::NodeIndex<FnIdInner>>,
-    Receiver<daggy::NodeIndex<FnIdInner>>,
-) {
+) -> StreamSetupInit<'f> {
     let (graph_structure, predecessor_counts) = match stream_order {
         StreamOrder::Forward => (graph_structure, edge_counts.incoming().to_vec()),
         StreamOrder::Reverse => (graph_structure_rev, edge_counts.outgoing().to_vec()),
@@ -1269,14 +1274,15 @@ fn stream_setup_init<'f>(
         .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
         .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
         .expect("Failed to preload function with no predecessors.");
-    (
+
+    StreamSetupInit {
         graph_structure,
         predecessor_counts,
         fn_ready_tx,
         fn_ready_rx,
         fn_done_tx,
         fn_done_rx,
-    )
+    }
 }
 
 #[cfg(feature = "async")]
@@ -1285,13 +1291,7 @@ fn stream_setup_init_concurrent<'f>(
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
     opts: FnGraphStreamOpts<'f>,
-) -> (
-    &'f Dag<(), Edge, FnIdInner>,
-    Receiver<daggy::NodeIndex<FnIdInner>>,
-    impl Future<Output = FnGraphStreamOutcome<()>> + 'f,
-    RwLock<Option<Sender<daggy::NodeIndex<FnIdInner>>>>,
-    RwLock<usize>,
-) {
+) -> StreamSetupInitConcurrent<'f, impl Future<Output = FnGraphStreamOutcome<()>> + 'f> {
     let FnGraphStreamOpts {
         stream_order,
         #[cfg(feature = "interruptible")]
@@ -1299,13 +1299,19 @@ fn stream_setup_init_concurrent<'f>(
         marker: _,
     } = opts;
 
-    let (graph_structure, predecessor_counts, fn_ready_tx, fn_ready_rx, fn_done_tx, fn_done_rx) =
-        stream_setup_init(
-            graph_structure,
-            graph_structure_rev,
-            edge_counts,
-            stream_order,
-        );
+    let StreamSetupInit {
+        graph_structure,
+        predecessor_counts,
+        fn_ready_tx,
+        fn_ready_rx,
+        fn_done_tx,
+        fn_done_rx,
+    } = stream_setup_init(
+        graph_structure,
+        graph_structure_rev,
+        edge_counts,
+        stream_order,
+    );
 
     let queuer = fn_ready_queuer(
         graph_structure,
@@ -1319,13 +1325,13 @@ fn stream_setup_init_concurrent<'f>(
     let fn_done_tx = RwLock::new(Some(fn_done_tx));
     let fns_remaining = graph_structure.node_count();
     let fns_remaining = RwLock::new(fns_remaining);
-    (
+    StreamSetupInitConcurrent {
         graph_structure,
         fn_ready_rx,
         queuer,
         fn_done_tx,
         fns_remaining,
-    )
+    }
 }
 
 /// Sends IDs of function whose predecessors have been executed to
@@ -1374,7 +1380,7 @@ async fn fn_ready_queuer<'f>(
                     fn_graph_stream_progress,
                 };
                 queuer_stream_fold_interruptible::<
-                    StreamOutcome<daggy::NodeIndex<FnIdInner>>,
+                    StreamOutcome<NodeIndex<FnIdInner>>,
                     _,
                     FinishCurrent,
                 >(
@@ -1397,7 +1403,7 @@ async fn fn_ready_queuer<'f>(
                     fn_graph_stream_progress,
                 };
                 queuer_stream_fold_interruptible::<
-                    StreamOutcomeNRemaining<daggy::NodeIndex<FnIdInner>>,
+                    StreamOutcomeNRemaining<NodeIndex<FnIdInner>>,
                     _,
                     PollNextN,
                 >(
@@ -1423,7 +1429,7 @@ async fn fn_ready_queuer<'f>(
 #[cfg(feature = "async")]
 async fn queuer_stream_fold(
     stream: stream::PollFn<
-        impl FnMut(&mut std::task::Context) -> Poll<Option<daggy::NodeIndex<FnIdInner>>>,
+        impl FnMut(&mut std::task::Context) -> Poll<Option<NodeIndex<FnIdInner>>>,
     >,
     queuer_stream_state: QueuerStreamState,
     graph_structure: &Dag<(), Edge, FnIdInner>,
@@ -1492,10 +1498,10 @@ async fn queuer_stream_fold_interruptible<'stream, StrmOutcome, S, IS>(
     stream: InterruptibleStream<'stream, S, IS>,
     queuer_stream_state_interruptible: QueuerStreamStateInterruptible,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-    fn_id_from_outcome: fn(StrmOutcome) -> (Option<daggy::NodeIndex<FnIdInner>>, bool),
+    fn_id_from_outcome: fn(StrmOutcome) -> (Option<NodeIndex<FnIdInner>>, bool),
 ) -> FnGraphStreamOutcome<()>
 where
-    S: Stream<Item = daggy::NodeIndex<FnIdInner>>,
+    S: Stream<Item = NodeIndex<FnIdInner>>,
     InterruptibleStream<'stream, S, IS>: Stream<Item = StrmOutcome>,
     IS: InterruptStrategyT,
 {
@@ -1582,6 +1588,23 @@ where
     FnGraphStreamOutcome::from(fn_graph_stream_progress)
 }
 
+struct StreamSetupInit<'f> {
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    predecessor_counts: Vec<usize>,
+    fn_ready_tx: Sender<NodeIndex<FnIdInner>>,
+    fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
+    fn_done_tx: Sender<NodeIndex<FnIdInner>>,
+    fn_done_rx: Receiver<NodeIndex<FnIdInner>>,
+}
+
+struct StreamSetupInitConcurrent<'f, QueuerFut> {
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
+    queuer: QueuerFut,
+    fn_done_tx: RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
+    fns_remaining: RwLock<usize>,
+}
+
 #[cfg(feature = "async")]
 struct FoldStreamState<'f, F, Seed, FnFold> {
     /// Graph of functions.
@@ -1589,7 +1612,7 @@ struct FoldStreamState<'f, F, Seed, FnFold> {
     /// Number of functions in the graph remaining to execute.
     fns_remaining: usize,
     /// Channel sender for function IDs that have been run.
-    fn_done_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+    fn_done_tx: Option<Sender<NodeIndex<FnIdInner>>>,
     /// Cumulative value after each fold.
     seed: Seed,
     /// Function to run each iteration.
@@ -1603,7 +1626,7 @@ struct QueuerStreamState {
     /// Number of predecessors each function in the graph is waiting on.
     predecessor_counts: Vec<usize>,
     /// Channel sender for function IDs that are ready to run.
-    fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+    fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
     /// IDs of the items that are processed.
     fn_ids_processed: Vec<FnId>,
 }
@@ -1613,7 +1636,7 @@ impl QueuerStreamState {
     fn new(
         fns_remaining: usize,
         predecessor_counts: Vec<usize>,
-        fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+        fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
     ) -> Self {
         Self {
             fns_remaining,
@@ -1631,7 +1654,7 @@ struct QueuerStreamStateInterruptible {
     /// Number of predecessors each function in the graph is waiting on.
     predecessor_counts: Vec<usize>,
     /// Channel sender for function IDs that are ready to run.
-    fn_ready_tx: Option<Sender<daggy::NodeIndex<FnIdInner>>>,
+    fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
     /// State during processing a `FnGraph` stream.
     fn_graph_stream_progress: FnGraphStreamProgress<()>,
 }
