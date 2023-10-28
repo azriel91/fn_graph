@@ -24,7 +24,7 @@ use tokio::sync::{
 };
 
 #[cfg(feature = "async")]
-use crate::{EdgeCounts, FnRef};
+use crate::{EdgeCounts, FnGraphStreamOpts, FnRef, StreamOrder};
 
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use crate::{
@@ -339,18 +339,12 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(
-            limit,
-            fn_for_each,
-            IterDirection::Forward,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
-        )
-        .await
+        self.for_each_concurrent_internal(limit, fn_for_each, FnGraphStreamOpts::default())
+            .await
     }
 
-    /// Runs the provided logic over the functions concurrently in reverse
-    /// topological order.
+    /// Runs the provided logic over the functions concurrently with the given
+    /// stream options.
     ///
     /// The first argument is an optional `limit` on the number of concurrent
     /// futures. If this limit is not `None`, no more than `limit` futures will
@@ -361,23 +355,18 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent_rev<'f, FnForEach, Fut>(
+    pub async fn for_each_concurrent_with<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
     ) where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(
-            limit,
-            fn_for_each,
-            IterDirection::Reverse,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
-        )
-        .await
+        self.for_each_concurrent_internal(limit, fn_for_each, opts)
+            .await
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
@@ -386,16 +375,22 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-        iter_direction: IterDirection,
-        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
+        opts: FnGraphStreamOpts<'f>,
     ) where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
+        let FnGraphStreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+            marker: _,
+        } = opts;
+
+        let (graph_structure, predecessor_counts) = match stream_order {
+            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            StreamOrder::Reverse => (
                 &self.graph_structure_rev,
                 self.edge_counts.outgoing().to_vec(),
             ),
@@ -479,14 +474,8 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(
-            limit,
-            fn_for_each,
-            IterDirection::Forward,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
-        )
-        .await
+        self.for_each_concurrent_mut_internal(limit, fn_for_each, FnGraphStreamOpts::default())
+            .await
     }
 
     /// Runs the provided logic over the functions concurrently in reverse
@@ -501,22 +490,17 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent_mut_rev<FnForEach, Fut>(
+    pub async fn for_each_concurrent_mut_with<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
     ) where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(
-            limit,
-            fn_for_each,
-            IterDirection::Reverse,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
-        )
-        .await
+        self.for_each_concurrent_mut_internal(limit, fn_for_each, opts)
+            .await
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
@@ -525,15 +509,21 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-        iter_direction: IterDirection,
-        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
+        opts: FnGraphStreamOpts<'f>,
     ) where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
+        let FnGraphStreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+            marker: _,
+        } = opts;
+
+        let (graph_structure, predecessor_counts) = match stream_order {
+            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            StreamOrder::Reverse => (
                 &self.graph_structure_rev,
                 self.edge_counts.outgoing().to_vec(),
             ),
@@ -721,54 +711,12 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(
-            limit,
-            fn_try_for_each,
-            IterDirection::Forward,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
-        )
-        .await
+        self.try_for_each_concurrent_internal(limit, fn_try_for_each, FnGraphStreamOpts::default())
+            .await
     }
 
-    /// Runs the provided logic over the functions concurrently in topological
-    /// order, stopping when an error is encountered.
-    ///
-    /// This gracefully waits until all produced tasks have returned. The return
-    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
-    /// errors.
-    ///
-    /// The first argument is an optional `limit` on the number of concurrent
-    /// futures. If this limit is not `None`, no more than `limit` futures will
-    /// be run concurrently. The `limit` argument is of type
-    /// `Into<Option<usize>>`, and so can be provided as either `None`,
-    /// `Some(10)`, or just `10`.
-    ///
-    /// **Note:** a limit of zero is interpreted as no limit at all, and will
-    /// have the same result as passing in `None`.
-    #[cfg(all(feature = "async", feature = "interruptible"))]
-    pub async fn try_for_each_concurrent_interruptible<'f, E, FnTryForEach, Fut>(
-        &'f self,
-        limit: impl Into<Option<usize>>,
-        interruptibility: Interruptibility<'f>,
-        fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
-    where
-        E: Debug,
-        FnTryForEach: Fn(&'f F) -> Fut,
-        Fut: Future<Output = Result<(), E>> + 'f,
-    {
-        self.try_for_each_concurrent_internal(
-            limit,
-            fn_try_for_each,
-            IterDirection::Forward,
-            interruptibility,
-        )
-        .await
-    }
-
-    /// Runs the provided logic over the functions concurrently in reverse
-    /// topological order, stopping when an error is encountered.
+    /// Runs the provided logic over the functions concurrently with the given
+    /// options, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned. The return
     /// error type is a `Vec<E>` as it is possible for multiple tasks to return
@@ -783,9 +731,10 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_rev<'f, E, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<(), Vec<E>>
     where
@@ -793,50 +742,8 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(
-            limit,
-            fn_try_for_each,
-            IterDirection::Reverse,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
-        )
-        .await
-    }
-
-    /// Runs the provided logic over the functions concurrently in reverse
-    /// topological order, stopping when an error is encountered.
-    ///
-    /// This gracefully waits until all produced tasks have returned. The return
-    /// error type is a `Vec<E>` as it is possible for multiple tasks to return
-    /// errors.
-    ///
-    /// The first argument is an optional `limit` on the number of concurrent
-    /// futures. If this limit is not `None`, no more than `limit` futures will
-    /// be run concurrently. The `limit` argument is of type
-    /// `Into<Option<usize>>`, and so can be provided as either `None`,
-    /// `Some(10)`, or just `10`.
-    ///
-    /// **Note:** a limit of zero is interpreted as no limit at all, and will
-    /// have the same result as passing in `None`.
-    #[cfg(all(feature = "async", feature = "interruptible"))]
-    pub async fn try_for_each_concurrent_interruptible_rev<'f, E, FnTryForEach, Fut>(
-        &'f self,
-        limit: impl Into<Option<usize>>,
-        interruptibility: Interruptibility<'f>,
-        fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
-    where
-        E: Debug,
-        FnTryForEach: Fn(&'f F) -> Fut,
-        Fut: Future<Output = Result<(), E>> + 'f,
-    {
-        self.try_for_each_concurrent_internal(
-            limit,
-            fn_try_for_each,
-            IterDirection::Reverse,
-            interruptibility,
-        )
-        .await
+        self.try_for_each_concurrent_internal(limit, fn_try_for_each, opts)
+            .await
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -874,9 +781,7 @@ impl<F> FnGraph<F> {
                         }
                     }
                 },
-                IterDirection::Forward,
-                #[cfg(feature = "interruptible")]
-                Interruptibility::NonInterruptible,
+                FnGraphStreamOpts::default(),
             )
             .await;
         match result {
@@ -885,8 +790,8 @@ impl<F> FnGraph<F> {
         }
     }
 
-    /// Runs the provided logic over the functions concurrently in reverse
-    /// topological order, stopping when an error is encountered.
+    /// Runs the provided logic over the functions concurrently with the given
+    /// options, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned.
     ///
@@ -899,9 +804,10 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_rev<'f, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_with<'f, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> ControlFlow<(), ()>
     where
@@ -920,9 +826,7 @@ impl<F> FnGraph<F> {
                         }
                     }
                 },
-                IterDirection::Reverse,
-                #[cfg(feature = "interruptible")]
-                Interruptibility::NonInterruptible,
+                opts,
             )
             .await;
         match result {
@@ -937,17 +841,23 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-        iter_direction: IterDirection,
-        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
+        opts: FnGraphStreamOpts<'f>,
     ) -> Result<(), Vec<E>>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
+        let FnGraphStreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+            marker: _,
+        } = opts;
+
+        let (graph_structure, predecessor_counts) = match stream_order {
+            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            StreamOrder::Reverse => (
                 &self.graph_structure_rev,
                 self.edge_counts.outgoing().to_vec(),
             ),
@@ -1065,9 +975,7 @@ impl<F> FnGraph<F> {
         self.try_for_each_concurrent_mut_internal(
             limit,
             fn_try_for_each,
-            IterDirection::Forward,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
+            FnGraphStreamOpts::default(),
         )
         .await
     }
@@ -1088,9 +996,10 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_mut_rev<E, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
     where
@@ -1098,14 +1007,8 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_mut_internal(
-            limit,
-            fn_try_for_each,
-            IterDirection::Reverse,
-            #[cfg(feature = "interruptible")]
-            Interruptibility::NonInterruptible,
-        )
-        .await
+        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, opts)
+            .await
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -1144,9 +1047,7 @@ impl<F> FnGraph<F> {
                         }
                     }
                 },
-                IterDirection::Forward,
-                #[cfg(feature = "interruptible")]
-                Interruptibility::NonInterruptible,
+                FnGraphStreamOpts::default(),
             )
             .await;
         match result {
@@ -1174,9 +1075,10 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_mut_rev<E, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> ControlFlow<(FnGraphStreamOutcome, Vec<E>), FnGraphStreamOutcome>
     where
@@ -1196,9 +1098,7 @@ impl<F> FnGraph<F> {
                         }
                     }
                 },
-                IterDirection::Reverse,
-                #[cfg(feature = "interruptible")]
-                Interruptibility::NonInterruptible,
+                opts,
             )
             .await;
         match result {
@@ -1214,21 +1114,27 @@ impl<F> FnGraph<F> {
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn try_for_each_concurrent_mut_internal<E, FnTryForEach, Fut>(
+    async fn try_for_each_concurrent_mut_internal<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-        iter_direction: IterDirection,
-        #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'_>,
+        opts: FnGraphStreamOpts<'f>,
     ) -> Result<FnGraphStreamOutcome, (FnGraphStreamOutcome, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
+        let FnGraphStreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility,
+            marker: _,
+        } = opts;
+
+        let (graph_structure, predecessor_counts) = match stream_order {
+            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            StreamOrder::Reverse => (
                 &self.graph_structure_rev,
                 self.edge_counts.outgoing().to_vec(),
             ),
@@ -1696,13 +1602,6 @@ where
 
 impl<F> Eq for FnGraph<F> where F: Eq {}
 
-#[cfg(feature = "async")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IterDirection {
-    Forward,
-    Reverse,
-}
-
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
@@ -2016,7 +1915,7 @@ mod tests {
             time::{self, Duration, Instant},
         };
 
-        use crate::{Edge, FnGraph, FnGraphBuilder};
+        use crate::{Edge, FnGraph, FnGraphBuilder, FnGraphStreamOpts};
 
         macro_rules! sleep_duration {
             () => {
@@ -2231,12 +2130,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_rev_returns_when_graph_is_empty() {
+        async fn for_each_concurrent_with_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .for_each_concurrent_rev(
+                .for_each_concurrent_with(
                     None,
+                    FnGraphStreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
                 )
@@ -2244,7 +2144,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_rev_runs_fns_concurrently()
+        async fn for_each_concurrent_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2255,7 +2155,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.for_each_concurrent_rev(None, |f| {
+                fn_graph.for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
@@ -2431,12 +2331,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_returns_when_graph_is_empty() -> Result<(), ()> {
+        async fn try_for_each_concurrent_with_returns_when_graph_is_empty() -> Result<(), ()> {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .try_for_each_concurrent_rev(
+                .try_for_each_concurrent_with(
                     None,
+                    FnGraphStreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { Ok::<_, ()>(()) },
                 )
@@ -2445,7 +2346,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_runs_fns_concurrently()
+        async fn try_for_each_concurrent_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2457,7 +2358,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
@@ -2479,7 +2380,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2491,7 +2392,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2511,7 +2412,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2523,7 +2424,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2546,7 +2447,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2558,7 +2459,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2614,7 +2515,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_mut_rev_runs_fns_concurrently()
+        async fn for_each_concurrent_mut_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2625,7 +2526,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.for_each_concurrent_mut_rev(None, |f| {
+                fn_graph.for_each_concurrent_mut_with(None, FnGraphStreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         let _ = fut.await;
@@ -2700,7 +2601,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("a")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("a")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
@@ -2733,7 +2634,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("c")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("c")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
             assert_eq!("c", seq_rx.try_recv().unwrap());
@@ -2773,7 +2674,7 @@ mod tests {
             // complete.
             assert_eq!(
                 [TestError("c"), TestError("b")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
@@ -2785,7 +2686,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_runs_fns_concurrently_mut()
+        async fn try_for_each_concurrent_mut_with_runs_fns_concurrently_mut()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2797,13 +2698,17 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        let _ = fut.await;
-                        Result::<_, TestError>::Ok(())
-                    }
-                }),
+                fn_graph.try_for_each_concurrent_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            let _ = fut.await;
+                            Result::<_, TestError>::Ok(())
+                        }
+                    },
+                ),
             )
             .await
             .unwrap();
@@ -2818,7 +2723,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2830,19 +2735,23 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "e" => Err(TestError("e")),
-                            _ => Ok(()),
+                fn_graph.try_for_each_concurrent_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "e" => Err(TestError("e")),
+                                _ => Ok(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
-            assert_eq!([TestError("e")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("e")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
@@ -2850,7 +2759,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2862,19 +2771,23 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "b" => Err(TestError("b")),
-                            _ => Ok(()),
+                fn_graph.try_for_each_concurrent_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => Err(TestError("b")),
+                                _ => Ok(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
-            assert_eq!([TestError("b")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("b")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
             assert_eq!("b", seq_rx.try_recv().unwrap());
@@ -2885,7 +2798,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2897,22 +2810,26 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "b" => Err(TestError("b")),
-                            "c" => Err(TestError("c")),
-                            _ => Ok(()),
+                fn_graph.try_for_each_concurrent_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => Err(TestError("b")),
+                                "c" => Err(TestError("c")),
+                                _ => Ok(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
             assert_eq!(
                 [TestError("b"), TestError("c")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
@@ -2946,7 +2863,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
@@ -2979,7 +2896,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
@@ -3011,7 +2928,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
@@ -3045,7 +2962,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
@@ -3071,12 +2988,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_returns_when_graph_is_empty() {
+        async fn try_for_each_concurrent_control_with_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
-                .try_for_each_concurrent_control_rev(
+                .try_for_each_concurrent_control_with(
                     None,
+                    FnGraphStreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { ControlFlow::Continue(()) },
                 )
@@ -3084,7 +3002,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_runs_fns_concurrently()
+        async fn try_for_each_concurrent_control_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -3093,16 +3011,20 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
-                    let fut = f.call(resources);
-                    async move {
-                        let _ = fut.await;
-                        ControlFlow::Continue(())
-                    }
-                }),
+                fn_graph.try_for_each_concurrent_control_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call(resources);
+                        async move {
+                            let _ = fut.await;
+                            ControlFlow::<(), ()>::Continue(())
+                        }
+                    },
+                ),
             )
             .await;
 
@@ -3117,7 +3039,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -3126,18 +3048,22 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
-                    let fut = f.call(resources);
-                    async move {
-                        match fut.await {
-                            "e" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call(resources);
+                        async move {
+                            match fut.await {
+                                "e" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
@@ -3148,7 +3074,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -3157,18 +3083,22 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
-                    let fut = f.call(resources);
-                    async move {
-                        match fut.await {
-                            "b" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call(resources);
+                        async move {
+                            match fut.await {
+                                "b" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
@@ -3182,7 +3112,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -3191,19 +3121,23 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
-                    let fut = f.call(resources);
-                    async move {
-                        match fut.await {
-                            "b" => ControlFlow::Break(()),
-                            "c" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call(resources);
+                        async move {
+                            match fut.await {
+                                "b" => ControlFlow::Break(()),
+                                "c" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
@@ -3226,14 +3160,14 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         let _ = fut.await;
-                        ControlFlow::Continue(())
+                        ControlFlow::<(), ()>::Continue(())
                     }
                 }),
             )
@@ -3258,7 +3192,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
@@ -3290,7 +3224,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
@@ -3324,7 +3258,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
@@ -3350,7 +3284,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_runs_fns_concurrently_mut()
+        async fn try_for_each_concurrent_control_mut_with_runs_fns_concurrently_mut()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -3359,16 +3293,20 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        let _ = fut.await;
-                        ControlFlow::Continue(())
-                    }
-                }),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            let _ = fut.await;
+                            ControlFlow::<(), ()>::Continue(())
+                        }
+                    },
+                ),
             )
             .await;
 
@@ -3382,7 +3320,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -3391,18 +3329,22 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "e" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "e" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
@@ -3413,7 +3355,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -3422,18 +3364,22 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "b" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
@@ -3447,7 +3393,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -3456,19 +3402,23 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "b" => ControlFlow::Break(()),
-                            "c" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    FnGraphStreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => ControlFlow::Break(()),
+                                "c" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
