@@ -386,7 +386,8 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> FnGraphStreamOutcome<()>
+    where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
@@ -412,7 +413,8 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> FnGraphStreamOutcome<()>
+    where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
@@ -428,7 +430,8 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> FnGraphStreamOutcome<()>
+    where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
@@ -477,7 +480,8 @@ impl<F> FnGraph<F> {
                 .await;
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        fn_graph_stream_outcome
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -617,7 +621,7 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -648,7 +652,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -672,14 +676,15 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control<'f, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
     where
+        E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>> + 'f,
+        Fut: Future<Output = ControlFlow<E, ()>> + 'f,
     {
         let result = self
             .try_for_each_concurrent_internal(limit, FnGraphStreamOpts::default(), |f| {
@@ -687,14 +692,19 @@ impl<F> FnGraph<F> {
                 async move {
                     match fut.await {
                         ControlFlow::Continue(()) => Result::Ok(()),
-                        ControlFlow::Break(()) => Result::Err(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
                 }
             })
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
@@ -712,15 +722,16 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_with<'f, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
     where
+        E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>> + 'f,
+        Fut: Future<Output = ControlFlow<E, ()>> + 'f,
     {
         let result = self
             .try_for_each_concurrent_internal(limit, opts, |f| {
@@ -728,14 +739,19 @@ impl<F> FnGraph<F> {
                 async move {
                     match fut.await {
                         ControlFlow::Continue(()) => Result::Ok(()),
-                        ControlFlow::Break(()) => Result::Err(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
                 }
             })
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                FnGraphStreamOutcomeState::NotStarted | FnGraphStreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                FnGraphStreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
@@ -746,7 +762,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -837,16 +853,16 @@ impl<F> FnGraph<F> {
             drop(result_tx);
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
             .await;
 
         if results.is_empty() {
-            Ok(())
+            Ok(fn_graph_stream_outcome)
         } else {
-            Err(results)
+            Err((fn_graph_stream_outcome, results))
         }
     }
 
@@ -2010,7 +2026,10 @@ mod tests {
             time::{self, Duration, Instant},
         };
 
-        use crate::{Edge, FnGraph, FnGraphBuilder, FnGraphStreamOpts};
+        use crate::{
+            Edge, FnGraph, FnGraphBuilder, FnGraphStreamOpts, FnGraphStreamOutcome,
+            FnGraphStreamOutcomeState,
+        };
 
         macro_rules! sleep_duration {
             () => {
@@ -2277,14 +2296,26 @@ mod tests {
         async fn try_for_each_concurrent_returns_when_graph_is_empty() -> Result<(), ()> {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph
+            let fn_graph_stream_outcome = fn_graph
                 .try_for_each_concurrent(
                     None,
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { Ok::<_, ()>(()) },
                 )
                 .await
-                .map_err(|_| ())
+                .map_err(|_| ())?;
+
+            assert_eq!(
+                FnGraphStreamOutcome {
+                    value: (),
+                    state: FnGraphStreamOutcomeState::Finished,
+                    fn_ids_processed: Vec::new(),
+                    fn_ids_not_processed: Vec::new(),
+                },
+                fn_graph_stream_outcome
+            );
+
+            Ok(())
         }
 
         #[tokio::test]
@@ -2346,7 +2377,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("a")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("a")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
@@ -2379,7 +2410,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("c")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("c")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
             assert_eq!("c", seq_rx.try_recv().unwrap());
@@ -2419,7 +2450,7 @@ mod tests {
             // complete.
             assert_eq!(
                 [TestError("c"), TestError("b")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
@@ -2434,7 +2465,7 @@ mod tests {
         async fn try_for_each_concurrent_with_returns_when_graph_is_empty() -> Result<(), ()> {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph
+            let fn_graph_stream_outcome = fn_graph
                 .try_for_each_concurrent_with(
                     None,
                     FnGraphStreamOpts::new().rev(),
@@ -2442,7 +2473,19 @@ mod tests {
                     |_f| async { Ok::<_, ()>(()) },
                 )
                 .await
-                .map_err(|_| ())
+                .map_err(|_| ())?;
+
+            assert_eq!(
+                FnGraphStreamOutcome {
+                    value: (),
+                    state: FnGraphStreamOutcomeState::Finished,
+                    fn_ids_processed: Vec::new(),
+                    fn_ids_not_processed: Vec::new(),
+                },
+                fn_graph_stream_outcome
+            );
+
+            Ok(())
         }
 
         #[tokio::test]
@@ -2504,7 +2547,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("e")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("e")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
@@ -2536,7 +2579,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("b")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("b")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
             assert_eq!("b", seq_rx.try_recv().unwrap());
@@ -2574,7 +2617,7 @@ mod tests {
 
             assert_eq!(
                 [TestError("b"), TestError("c")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
@@ -2944,11 +2987,11 @@ mod tests {
         async fn try_for_each_concurrent_control_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = fn_graph
                 .try_for_each_concurrent_control(
                     None,
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |_f| async { ControlFlow::Continue(()) },
+                    |_f| async { ControlFlow::<(), ()>::Continue(()) },
                 )
                 .await;
         }
@@ -2970,7 +3013,7 @@ mod tests {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
-                        ControlFlow::Continue(())
+                        ControlFlow::<(), ()>::Continue(())
                     }
                 }),
             )
@@ -3091,12 +3134,12 @@ mod tests {
         async fn try_for_each_concurrent_control_with_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = fn_graph
                 .try_for_each_concurrent_control_with(
                     None,
                     FnGraphStreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |_f| async { ControlFlow::Continue(()) },
+                    |_f| async { ControlFlow::<(), ()>::Continue(()) },
                 )
                 .await;
         }
