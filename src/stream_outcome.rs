@@ -5,7 +5,7 @@ use crate::{FnGraphStreamProgress, FnGraphStreamProgressState, FnId};
 /// Currently this is only constructed by
 /// `FnGraphStreamOutcome::from(FnGraphStreamProgress)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FnGraphStreamOutcome<T> {
+pub struct StreamOutcome<T> {
     /// The value of the outcome.
     pub value: T,
     /// How a `FnGraph` stream operation ended.
@@ -16,7 +16,7 @@ pub struct FnGraphStreamOutcome<T> {
     pub fn_ids_not_processed: Vec<FnId>,
 }
 
-impl<T> FnGraphStreamOutcome<T> {
+impl<T> StreamOutcome<T> {
     /// Returns a `FnGraphStreamOutcome` that is `Finished<T>`.
     pub fn finished_with(value: T, fn_ids_processed: Vec<FnId>) -> Self {
         Self {
@@ -28,8 +28,8 @@ impl<T> FnGraphStreamOutcome<T> {
     }
 
     /// Maps this outcome's value to another.
-    pub fn map<TNew>(self, f: impl FnOnce(T) -> TNew) -> FnGraphStreamOutcome<TNew> {
-        let FnGraphStreamOutcome {
+    pub fn map<TNew>(self, f: impl FnOnce(T) -> TNew) -> StreamOutcome<TNew> {
+        let StreamOutcome {
             value,
             state,
             fn_ids_processed,
@@ -38,7 +38,7 @@ impl<T> FnGraphStreamOutcome<T> {
 
         let value = f(value);
 
-        FnGraphStreamOutcome {
+        StreamOutcome {
             value,
             state,
             fn_ids_processed,
@@ -71,7 +71,7 @@ impl<T> FnGraphStreamOutcome<T> {
     }
 }
 
-impl<T> Default for FnGraphStreamOutcome<T>
+impl<T> Default for StreamOutcome<T>
 where
     T: Default,
 {
@@ -85,7 +85,7 @@ where
     }
 }
 
-impl<T> From<FnGraphStreamProgress<T>> for FnGraphStreamOutcome<T> {
+impl<T> From<FnGraphStreamProgress<T>> for StreamOutcome<T> {
     fn from(fn_graph_stream_progress: FnGraphStreamProgress<T>) -> Self {
         let FnGraphStreamProgress {
             value,

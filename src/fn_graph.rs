@@ -27,15 +27,15 @@ use tokio::sync::{
 
 #[cfg(feature = "async")]
 use crate::{
-    EdgeCounts, FnGraphStreamOpts, FnGraphStreamOutcome, FnGraphStreamOutcomeState,
-    FnGraphStreamProgress, FnGraphStreamProgressState, FnRef, StreamOrder,
+    EdgeCounts, FnGraphStreamOpts, FnGraphStreamOutcomeState, FnGraphStreamProgress,
+    FnGraphStreamProgressState, FnRef, StreamOrder, StreamOutcome,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
     interrupt_strategy::{FinishCurrent, PollNextN},
     interruptibility::Interruptibility,
     InterruptStrategy, InterruptStrategyT, InterruptibleStream, InterruptibleStreamExt,
-    StreamOutcome, StreamOutcomeNRemaining,
+    StreamOutcome as InterruptibleStreamOutcome, StreamOutcomeNRemaining,
 };
 
 /// Directed acyclic graph of functions.
@@ -236,7 +236,7 @@ impl<F> FnGraph<F> {
         &mut self,
         seed: Seed,
         fn_fold: FnFold,
-    ) -> FnGraphStreamOutcome<Option<Seed>>
+    ) -> StreamOutcome<Option<Seed>>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -254,7 +254,7 @@ impl<F> FnGraph<F> {
         seed: Seed,
         opts: FnGraphStreamOpts<'f>,
         fn_fold: FnFold,
-    ) -> FnGraphStreamOutcome<Option<Seed>>
+    ) -> StreamOutcome<Option<Seed>>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -267,7 +267,7 @@ impl<F> FnGraph<F> {
         seed: Seed,
         opts: FnGraphStreamOpts<'f>,
         fn_fold: FnFold,
-    ) -> FnGraphStreamOutcome<Option<Seed>>
+    ) -> StreamOutcome<Option<Seed>>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -388,7 +388,7 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-    ) -> FnGraphStreamOutcome<()>
+    ) -> StreamOutcome<()>
     where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
@@ -415,7 +415,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) -> FnGraphStreamOutcome<()>
+    ) -> StreamOutcome<()>
     where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
@@ -432,7 +432,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) -> FnGraphStreamOutcome<()>
+    ) -> StreamOutcome<()>
     where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
@@ -507,7 +507,7 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-    ) -> FnGraphStreamOutcome<()>
+    ) -> StreamOutcome<()>
     where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
@@ -533,7 +533,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) -> FnGraphStreamOutcome<()>
+    ) -> StreamOutcome<()>
     where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
@@ -549,7 +549,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_for_each: FnForEach,
-    ) -> FnGraphStreamOutcome<()>
+    ) -> StreamOutcome<()>
     where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
@@ -633,7 +633,7 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -664,7 +664,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -692,7 +692,7 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -739,7 +739,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -774,7 +774,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
@@ -898,7 +898,7 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -933,7 +933,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -961,7 +961,7 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -1008,7 +1008,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(FnGraphStreamOutcome<()>, Vec<E>), FnGraphStreamOutcome<()>>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -1043,7 +1043,7 @@ impl<F> FnGraph<F> {
         limit: impl Into<Option<usize>>,
         opts: FnGraphStreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<FnGraphStreamOutcome<()>, (FnGraphStreamOutcome<()>, Vec<E>)>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
@@ -1291,7 +1291,7 @@ fn stream_setup_init_concurrent<'f>(
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
     opts: FnGraphStreamOpts<'f>,
-) -> StreamSetupInitConcurrent<'f, impl Future<Output = FnGraphStreamOutcome<()>> + 'f> {
+) -> StreamSetupInitConcurrent<'f, impl Future<Output = StreamOutcome<()>> + 'f> {
     let FnGraphStreamOpts {
         stream_order,
         #[cfg(feature = "interruptible")]
@@ -1343,7 +1343,7 @@ async fn fn_ready_queuer<'f>(
     mut fn_done_rx: Receiver<FnId>,
     fn_ready_tx: Sender<FnId>,
     #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
-) -> FnGraphStreamOutcome<()> {
+) -> StreamOutcome<()> {
     let fns_remaining = graph_structure.node_count();
     let mut fn_graph_stream_progress = FnGraphStreamProgress::with_capacity((), fns_remaining);
 
@@ -1380,7 +1380,7 @@ async fn fn_ready_queuer<'f>(
                     fn_graph_stream_progress,
                 };
                 queuer_stream_fold_interruptible::<
-                    StreamOutcome<NodeIndex<FnIdInner>>,
+                    InterruptibleStreamOutcome<NodeIndex<FnIdInner>>,
                     _,
                     FinishCurrent,
                 >(
@@ -1388,9 +1388,11 @@ async fn fn_ready_queuer<'f>(
                     queuer_stream_state_interruptible,
                     graph_structure,
                     |stream_outcome| match stream_outcome {
-                        StreamOutcome::InterruptBeforePoll => (None, true),
-                        StreamOutcome::InterruptDuringPoll(fn_id) => (Some(fn_id), true),
-                        StreamOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                        InterruptibleStreamOutcome::InterruptBeforePoll => (None, true),
+                        InterruptibleStreamOutcome::InterruptDuringPoll(fn_id) => {
+                            (Some(fn_id), true)
+                        }
+                        InterruptibleStreamOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
                     },
                 )
                 .await
@@ -1433,7 +1435,7 @@ async fn queuer_stream_fold(
     >,
     queuer_stream_state: QueuerStreamState,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-) -> FnGraphStreamOutcome<()> {
+) -> StreamOutcome<()> {
     let queuer_stream_state = stream
         .fold(
             queuer_stream_state,
@@ -1489,7 +1491,7 @@ async fn queuer_stream_fold(
         fn_ids_processed, ..
     } = queuer_stream_state;
 
-    FnGraphStreamOutcome::finished_with((), fn_ids_processed)
+    StreamOutcome::finished_with((), fn_ids_processed)
 }
 
 /// Polls the queuer stream until completed or interrupted.
@@ -1499,7 +1501,7 @@ async fn queuer_stream_fold_interruptible<'stream, StrmOutcome, S, IS>(
     queuer_stream_state_interruptible: QueuerStreamStateInterruptible,
     graph_structure: &Dag<(), Edge, FnIdInner>,
     fn_id_from_outcome: fn(StrmOutcome) -> (Option<NodeIndex<FnIdInner>>, bool),
-) -> FnGraphStreamOutcome<()>
+) -> StreamOutcome<()>
 where
     S: Stream<Item = NodeIndex<FnIdInner>>,
     InterruptibleStream<'stream, S, IS>: Stream<Item = StrmOutcome>,
@@ -1585,7 +1587,7 @@ where
         ..
     } = queuer_stream_state_interruptible;
 
-    FnGraphStreamOutcome::from(fn_graph_stream_progress)
+    StreamOutcome::from(fn_graph_stream_progress)
 }
 
 struct StreamSetupInit<'f> {
@@ -2050,8 +2052,8 @@ mod tests {
         };
 
         use crate::{
-            Edge, FnGraph, FnGraphBuilder, FnGraphStreamOpts, FnGraphStreamOutcome,
-            FnGraphStreamOutcomeState,
+            Edge, FnGraph, FnGraphBuilder, FnGraphStreamOpts, FnGraphStreamOutcomeState,
+            StreamOutcome,
         };
 
         macro_rules! sleep_duration {
@@ -2329,7 +2331,7 @@ mod tests {
                 .map_err(|_| ())?;
 
             assert_eq!(
-                FnGraphStreamOutcome {
+                StreamOutcome {
                     value: (),
                     state: FnGraphStreamOutcomeState::Finished,
                     fn_ids_processed: Vec::new(),
@@ -2499,7 +2501,7 @@ mod tests {
                 .map_err(|_| ())?;
 
             assert_eq!(
-                FnGraphStreamOutcome {
+                StreamOutcome {
                     value: (),
                     state: FnGraphStreamOutcomeState::Finished,
                     fn_ids_processed: Vec::new(),
