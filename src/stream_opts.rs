@@ -7,7 +7,7 @@ use crate::StreamOrder;
 
 /// How to stream item from the graph.
 #[derive(Debug)]
-pub struct FnGraphStreamOpts<'rx> {
+pub struct StreamOpts<'rx> {
     /// Order to stream items.
     pub(crate) stream_order: StreamOrder,
     /// Whether the stream is interruptible
@@ -17,7 +17,7 @@ pub struct FnGraphStreamOpts<'rx> {
     pub(crate) marker: PhantomData<&'rx ()>,
 }
 
-impl<'rx> FnGraphStreamOpts<'rx> {
+impl<'rx> StreamOpts<'rx> {
     /// Returns a new `FnGraphStreamOpts` with forward iteration and
     /// non-interruptibility.
     pub fn new() -> Self {
@@ -40,7 +40,7 @@ impl<'rx> FnGraphStreamOpts<'rx> {
     }
 }
 
-impl<'rx> Default for FnGraphStreamOpts<'rx> {
+impl<'rx> Default for StreamOpts<'rx> {
     fn default() -> Self {
         Self {
             stream_order: StreamOrder::Forward,

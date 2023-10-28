@@ -124,14 +124,14 @@ mod type_ids;
 #[cfg(feature = "async")]
 pub use crate::fn_ref::FnRef;
 #[cfg(feature = "async")]
-pub use fn_graph_stream_opts::FnGraphStreamOpts;
+pub use stream_opts::StreamOpts;
 #[cfg(feature = "async")]
 pub(crate) use stream_order::StreamOrder;
 
 #[cfg(feature = "async")]
-mod fn_graph_stream_opts;
-#[cfg(feature = "async")]
 mod fn_ref;
+#[cfg(feature = "async")]
+mod stream_opts;
 #[cfg(feature = "async")]
 mod stream_order;
 

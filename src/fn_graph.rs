@@ -27,8 +27,8 @@ use tokio::sync::{
 
 #[cfg(feature = "async")]
 use crate::{
-    EdgeCounts, FnGraphStreamOpts, FnGraphStreamOutcomeState, FnGraphStreamProgress,
-    FnGraphStreamProgressState, FnRef, StreamOrder, StreamOutcome,
+    EdgeCounts, FnGraphStreamOutcomeState, FnGraphStreamProgress, FnGraphStreamProgressState,
+    FnRef, StreamOpts, StreamOrder, StreamOutcome,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
@@ -115,7 +115,7 @@ impl<F> FnGraph<F> {
     /// have returned.
     #[cfg(feature = "async")]
     pub fn stream(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_internal(FnGraphStreamOpts::default())
+        self.stream_internal(StreamOpts::default())
     }
 
     /// Returns a stream of function references in reverse topological order.
@@ -124,13 +124,13 @@ impl<F> FnGraph<F> {
     /// have returned.
     #[cfg(feature = "async")]
     pub fn stream_rev(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_internal(FnGraphStreamOpts::default().rev())
+        self.stream_internal(StreamOpts::default().rev())
     }
 
     #[cfg(feature = "async")]
     fn stream_internal<'f>(
         &'f self,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
     ) -> impl Stream<Item = FnRef<'f, F>> + 'f {
         let FnGraph {
             ref graph,
@@ -140,7 +140,7 @@ impl<F> FnGraph<F> {
             ref edge_counts,
         } = self;
 
-        let FnGraphStreamOpts {
+        let StreamOpts {
             stream_order,
             // Currently we don't support interruptibility for `stream_internal` as this alters the
             // return type of the stream.
@@ -240,7 +240,7 @@ impl<F> FnGraph<F> {
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
-        self.fold_async_internal(seed, FnGraphStreamOpts::default(), fn_fold)
+        self.fold_async_internal(seed, StreamOpts::default(), fn_fold)
             .await
     }
 
@@ -252,7 +252,7 @@ impl<F> FnGraph<F> {
     pub async fn fold_async_with<'f, Seed, FnFold>(
         &mut self,
         seed: Seed,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Option<Seed>>
     where
@@ -265,7 +265,7 @@ impl<F> FnGraph<F> {
     async fn fold_async_internal<'f, Seed, FnFold>(
         &'f mut self,
         seed: Seed,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Option<Seed>>
     where
@@ -279,7 +279,7 @@ impl<F> FnGraph<F> {
             ref edge_counts,
         } = self;
 
-        let FnGraphStreamOpts {
+        let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
             interruptibility,
@@ -394,7 +394,7 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(limit, FnGraphStreamOpts::default(), fn_for_each)
+        self.for_each_concurrent_internal(limit, StreamOpts::default(), fn_for_each)
             .await
     }
 
@@ -413,7 +413,7 @@ impl<F> FnGraph<F> {
     pub async fn for_each_concurrent_with<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -430,7 +430,7 @@ impl<F> FnGraph<F> {
     async fn for_each_concurrent_internal<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -512,7 +512,7 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(limit, FnGraphStreamOpts::default(), fn_for_each)
+        self.for_each_concurrent_mut_internal(limit, StreamOpts::default(), fn_for_each)
             .await
     }
 
@@ -531,7 +531,7 @@ impl<F> FnGraph<F> {
     pub async fn for_each_concurrent_mut_with<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -547,7 +547,7 @@ impl<F> FnGraph<F> {
     async fn for_each_concurrent_mut_internal<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -639,7 +639,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(limit, FnGraphStreamOpts::default(), fn_try_for_each)
+        self.try_for_each_concurrent_internal(limit, StreamOpts::default(), fn_try_for_each)
             .await
     }
 
@@ -662,7 +662,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -699,7 +699,7 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ControlFlow<E, ()>> + 'f,
     {
         let result = self
-            .try_for_each_concurrent_internal(limit, FnGraphStreamOpts::default(), |f| {
+            .try_for_each_concurrent_internal(limit, StreamOpts::default(), |f| {
                 let fut = fn_try_for_each(f);
                 async move {
                     match fut.await {
@@ -737,7 +737,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_control_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
@@ -772,7 +772,7 @@ impl<F> FnGraph<F> {
     async fn try_for_each_concurrent_internal<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -780,7 +780,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        let FnGraphStreamOpts {
+        let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
             interruptibility,
@@ -904,12 +904,8 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_mut_internal(
-            limit,
-            FnGraphStreamOpts::default(),
-            fn_try_for_each,
-        )
-        .await
+        self.try_for_each_concurrent_mut_internal(limit, StreamOpts::default(), fn_try_for_each)
+            .await
     }
 
     /// Runs the provided logic over the functions concurrently in reverse
@@ -931,7 +927,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -968,7 +964,7 @@ impl<F> FnGraph<F> {
         Fut: Future<Output = ControlFlow<E, ()>>,
     {
         let result = self
-            .try_for_each_concurrent_mut_internal(limit, FnGraphStreamOpts::default(), |f| {
+            .try_for_each_concurrent_mut_internal(limit, StreamOpts::default(), |f| {
                 let fut = fn_try_for_each(f);
                 async move {
                     match fut.await {
@@ -1006,7 +1002,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_control_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
@@ -1041,7 +1037,7 @@ impl<F> FnGraph<F> {
     async fn try_for_each_concurrent_mut_internal<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: FnGraphStreamOpts<'f>,
+        opts: StreamOpts<'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -1049,7 +1045,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        let FnGraphStreamOpts {
+        let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
             interruptibility,
@@ -1290,9 +1286,9 @@ fn stream_setup_init_concurrent<'f>(
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
-    opts: FnGraphStreamOpts<'f>,
+    opts: StreamOpts<'f>,
 ) -> StreamSetupInitConcurrent<'f, impl Future<Output = StreamOutcome<()>> + 'f> {
-    let FnGraphStreamOpts {
+    let StreamOpts {
         stream_order,
         #[cfg(feature = "interruptible")]
         interruptibility,
@@ -2052,8 +2048,7 @@ mod tests {
         };
 
         use crate::{
-            Edge, FnGraph, FnGraphBuilder, FnGraphStreamOpts, FnGraphStreamOutcomeState,
-            StreamOutcome,
+            Edge, FnGraph, FnGraphBuilder, FnGraphStreamOutcomeState, StreamOpts, StreamOutcome,
         };
 
         macro_rules! sleep_duration {
@@ -2191,7 +2186,7 @@ mod tests {
             fn_graph
                 .fold_async_with(
                     (),
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |(), _f| Box::pin(async {}),
                 )
@@ -2209,16 +2204,12 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
-                fn_graph.fold_async_with(
-                    resources,
-                    FnGraphStreamOpts::new().rev(),
-                    |resources, f| {
-                        Box::pin(async move {
-                            f.call_mut(&resources).await;
-                            resources
-                        })
-                    },
-                ),
+                fn_graph.fold_async_with(resources, StreamOpts::new().rev(), |resources, f| {
+                    Box::pin(async move {
+                        f.call_mut(&resources).await;
+                        resources
+                    })
+                }),
             )
             .await;
 
@@ -2280,7 +2271,7 @@ mod tests {
             fn_graph
                 .for_each_concurrent_with(
                     None,
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
                 )
@@ -2299,7 +2290,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
+                fn_graph.for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
@@ -2493,7 +2484,7 @@ mod tests {
             let fn_graph_stream_outcome = fn_graph
                 .try_for_each_concurrent_with(
                     None,
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { Ok::<_, ()>(()) },
                 )
@@ -2526,7 +2517,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
@@ -2560,7 +2551,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2592,7 +2583,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2627,7 +2618,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_with(None, FnGraphStreamOpts::new().rev(), |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2694,7 +2685,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.for_each_concurrent_mut_with(None, FnGraphStreamOpts::new().rev(), |f| {
+                fn_graph.for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         let _ = fut.await;
@@ -2866,17 +2857,13 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_mut_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            let _ = fut.await;
-                            Result::<_, TestError>::Ok(())
-                        }
-                    },
-                ),
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        let _ = fut.await;
+                        Result::<_, TestError>::Ok(())
+                    }
+                }),
             )
             .await
             .unwrap();
@@ -2903,19 +2890,15 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_mut_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "e" => Err(TestError("e")),
-                                _ => Ok(()),
-                            }
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "e" => Err(TestError("e")),
+                            _ => Ok(()),
                         }
-                    },
-                ),
+                    }
+                }),
             )
             .await;
 
@@ -2939,19 +2922,15 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_mut_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                _ => Ok(()),
-                            }
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            _ => Ok(()),
                         }
-                    },
-                ),
+                    }
+                }),
             )
             .await;
 
@@ -2978,20 +2957,16 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_mut_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call_mut(resources);
-                        async move {
-                            match fut.await {
-                                "b" => Err(TestError("b")),
-                                "c" => Err(TestError("c")),
-                                _ => Ok(()),
-                            }
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call_mut(resources);
+                    async move {
+                        match fut.await {
+                            "b" => Err(TestError("b")),
+                            "c" => Err(TestError("c")),
+                            _ => Ok(()),
                         }
-                    },
-                ),
+                    }
+                }),
             )
             .await;
 
@@ -3162,7 +3137,7 @@ mod tests {
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = fn_graph
                 .try_for_each_concurrent_control_with(
                     None,
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { ControlFlow::<(), ()>::Continue(()) },
                 )
@@ -3182,17 +3157,13 @@ mod tests {
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_control_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            let _ = fut.await;
-                            ControlFlow::<(), ()>::Continue(())
-                        }
-                    },
-                ),
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        let _ = fut.await;
+                        ControlFlow::<(), ()>::Continue(())
+                    }
+                }),
             )
             .await;
 
@@ -3219,19 +3190,15 @@ mod tests {
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_control_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "e" => ControlFlow::Break(()),
-                                _ => ControlFlow::Continue(()),
-                            }
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "e" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
                         }
-                    },
-                ),
+                    }
+                }),
             )
             .await;
 
@@ -3254,19 +3221,15 @@ mod tests {
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "b" => ControlFlow::Break(()),
-                                _ => ControlFlow::Continue(()),
-                            }
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
                         }
-                    },
-                ),
+                    }
+                }),
             )
             .await;
 
@@ -3292,20 +3255,16 @@ mod tests {
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_with(
-                    None,
-                    FnGraphStreamOpts::new().rev(),
-                    |f| {
-                        let fut = f.call(resources);
-                        async move {
-                            match fut.await {
-                                "b" => ControlFlow::Break(()),
-                                "c" => ControlFlow::Break(()),
-                                _ => ControlFlow::Continue(()),
-                            }
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
+                    let fut = f.call(resources);
+                    async move {
+                        match fut.await {
+                            "b" => ControlFlow::Break(()),
+                            "c" => ControlFlow::Break(()),
+                            _ => ControlFlow::Continue(()),
                         }
-                    },
-                ),
+                    }
+                }),
             )
             .await;
 
@@ -3466,7 +3425,7 @@ mod tests {
                 Duration::from_millis(255),
                 fn_graph.try_for_each_concurrent_control_mut_with(
                     None,
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -3502,7 +3461,7 @@ mod tests {
                 Duration::from_millis(70),
                 fn_graph.try_for_each_concurrent_control_mut_with(
                     None,
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -3537,7 +3496,7 @@ mod tests {
                 Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_control_mut_with(
                     None,
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     |f| {
                         let fut = f.call_mut(resources);
                         async move {
@@ -3575,7 +3534,7 @@ mod tests {
                 Duration::from_millis(197),
                 fn_graph.try_for_each_concurrent_control_mut_with(
                     None,
-                    FnGraphStreamOpts::new().rev(),
+                    StreamOpts::new().rev(),
                     |f| {
                         let fut = f.call_mut(resources);
                         async move {
