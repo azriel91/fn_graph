@@ -21,7 +21,7 @@ use futures::{
 };
 #[cfg(feature = "async")]
 use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, error::SendError, Receiver, Sender},
     RwLock,
 };
 
@@ -334,10 +334,7 @@ impl<F> FnGraph<F> {
                     let r#fn = &mut graph[fn_id];
                     let seed = fn_fold(seed, r#fn).await;
                     if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
+                        fn_done_send(fn_done_tx, fn_id).await;
                     }
 
                     // Close `fn_done_rx` when all functions have been executed,
@@ -467,22 +464,8 @@ impl<F> FnGraph<F> {
                 .for_each_concurrent(limit, |fn_id| async move {
                     let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
                     fn_for_each(r#fn).await;
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
         };
@@ -589,22 +572,8 @@ impl<F> FnGraph<F> {
                         .try_write()
                         .expect("Expected to borrow fn mutably.");
                     fn_for_each(&mut r#fn).await;
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
         };
@@ -843,22 +812,8 @@ impl<F> FnGraph<F> {
                         fn_done_tx.write().await.take();
                     };
 
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
 
@@ -1111,22 +1066,8 @@ impl<F> FnGraph<F> {
                         fn_done_tx.write().await.take();
                     };
 
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
 
@@ -1243,6 +1184,52 @@ impl<F> FnGraph<F> {
     pub fn iter_insertion_with_indices(&self) -> NodeReferences<F, FnIdInner> {
         use daggy::petgraph::visit::IntoNodeReferences;
         self.graph.node_references()
+    }
+}
+
+/// Sends the ID of a processed function to the queuer.
+///
+/// Used by the scheduler.
+#[cfg(feature = "async")]
+async fn fn_done_send_locked(
+    fn_done_tx: &RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
+    fn_id: NodeIndex<FnIdInner>,
+) {
+    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
+        fn_done_send(fn_done_tx, fn_id).await;
+    }
+}
+
+/// Sends the ID of a processed function to the queuer.
+///
+/// Used by the scheduler.
+#[cfg(feature = "async")]
+async fn fn_done_send(fn_done_tx: &Sender<NodeIndex<FnIdInner>>, fn_id: NodeIndex<FnIdInner>) {
+    let fn_done_send_result = fn_done_tx.send(fn_id).await;
+
+    match fn_done_send_result {
+        Ok(()) => {}
+        Err(SendError(_fn_id)) => {
+            // Ignore -- queuer is likely interrupted and is no longer
+            // listening.
+        }
+    }
+}
+
+/// Decrements `fns_remaining` and Closes `fn_done_rx` when all functions have
+/// been executed.
+#[cfg(feature = "async")]
+async fn fns_remaining_decrement(
+    fns_remaining: &RwLock<usize>,
+    fn_done_tx: &RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
+) {
+    let fns_remaining_val = {
+        let mut fns_remaining_ref = fns_remaining.write().await;
+        *fns_remaining_ref -= 1;
+        *fns_remaining_ref
+    };
+    if fns_remaining_val == 0 {
+        fn_done_tx.write().await.take();
     }
 }
 
@@ -1521,6 +1508,8 @@ where
                     ref mut fn_ids_not_processed,
                 } = &mut fn_graph_stream_progress;
 
+                let (fn_id, interrupted) = fn_id_from_outcome(stream_outcome);
+
                 // Close `fn_ready_rx` when all functions have been executed,
                 fns_remaining -= 1;
                 if fns_remaining == 0 {
@@ -1530,7 +1519,9 @@ where
                     *state = StreamProgressState::InProgress;
                 }
 
-                let (fn_id, interrupted) = fn_id_from_outcome(stream_outcome);
+                if interrupted {
+                    fn_ready_tx.take();
+                }
 
                 if let Some(fn_id) = fn_id {
                     // Mark `fn_id` as processed.
@@ -1565,7 +1556,8 @@ where
                             });
                     }
                 } else {
-                    todo!("");
+                    // We were interrupted. The clearing of `fn_ready_tx` means
+                    // this function should no longer be polled.
                 }
 
                 QueuerStreamStateInterruptible {
