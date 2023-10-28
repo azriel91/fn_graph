@@ -116,7 +116,7 @@ impl<F> FnGraph<F> {
     /// have returned.
     #[cfg(feature = "async")]
     pub fn stream(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_internal(&self.graph_structure, self.edge_counts.incoming().to_vec())
+        self.stream_internal(FnGraphStreamOpts::default())
     }
 
     /// Returns a stream of function references in reverse topological order.
@@ -124,32 +124,36 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub fn stream_rev(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_internal(
-            &self.graph_structure_rev,
-            self.edge_counts.outgoing().to_vec(),
-        )
+    pub fn stream_rev<'f>(&'f self) -> impl Stream<Item = FnRef<'f, F>> + 'f {
+        self.stream_internal(FnGraphStreamOpts::default().rev())
     }
 
     #[cfg(feature = "async")]
     fn stream_internal<'f>(
         &'f self,
-        graph_structure: &'f Dag<(), Edge, FnIdInner>,
-        mut predecessor_counts: Vec<usize>,
+        opts: FnGraphStreamOpts<'f>,
     ) -> impl Stream<Item = FnRef<'f, F>> + 'f {
-        // Decrement `predecessor_counts[child_fn_id]` every time a function ref
-        // is dropped, and if `predecessor_counts[child_fn_id]` is 0, the stream
-        // can produce `child_fn`s.
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, mut fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+        let FnGraph {
+            ref graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(&graph_structure)
-            .iter(&graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        let (
+            graph_structure,
+            mut predecessor_counts,
+            fn_ready_tx,
+            mut fn_ready_rx,
+            fn_done_tx,
+            mut fn_done_rx,
+        ) = stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            opts.stream_order,
+        );
 
         let mut fns_remaining = graph_structure.node_count();
         let mut fn_ready_tx = Some(fn_ready_tx);
@@ -189,7 +193,7 @@ impl<F> FnGraph<F> {
             let poll = if let Some(fn_done_tx) = fn_done_tx.as_ref() {
                 fn_ready_rx.poll_recv(context).map(|fn_id| {
                     fn_id.map(|fn_id| {
-                        let r#fn = &self.graph[fn_id];
+                        let r#fn = &graph[fn_id];
                         FnRef {
                             fn_id,
                             r#fn,
@@ -390,7 +394,7 @@ impl<F> FnGraph<F> {
         } = self;
 
         let (graph_structure, mut fn_ready_rx, queuer, fn_done_tx, fns_remaining) =
-            stream_setup_init(opts, graph_structure, edge_counts, graph_structure_rev);
+            stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
 
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
@@ -497,7 +501,7 @@ impl<F> FnGraph<F> {
         } = self;
 
         let (graph_structure, mut fn_ready_rx, queuer, fn_done_tx, fns_remaining) =
-            stream_setup_init(opts, graph_structure, edge_counts, graph_structure_rev);
+            stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
 
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
@@ -1167,10 +1171,50 @@ impl<F> FnGraph<F> {
 }
 
 fn stream_setup_init<'f>(
-    opts: FnGraphStreamOpts<'f>,
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
-    edge_counts: &EdgeCounts,
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
+    edge_counts: &EdgeCounts,
+    stream_order: StreamOrder,
+) -> (
+    &'f Dag<(), Edge, FnIdInner>,
+    Vec<usize>,
+    Sender<daggy::NodeIndex<FnIdInner>>,
+    Receiver<daggy::NodeIndex<FnIdInner>>,
+    Sender<daggy::NodeIndex<FnIdInner>>,
+    Receiver<daggy::NodeIndex<FnIdInner>>,
+) {
+    let (graph_structure, predecessor_counts) = match stream_order {
+        StreamOrder::Forward => (graph_structure, edge_counts.incoming().to_vec()),
+        StreamOrder::Reverse => (graph_structure_rev, edge_counts.outgoing().to_vec()),
+    };
+    // Decrement `predecessor_counts[child_fn_id]` every time a function ref
+    // is dropped, and if `predecessor_counts[child_fn_id]` is 0, the stream
+    // can produce `child_fn`s.
+    let channel_capacity = std::cmp::max(1, graph_structure.node_count());
+    let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
+    let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+
+    // Preload the channel with all of the functions that have no predecessors
+    Topo::new(&graph_structure)
+        .iter(&graph_structure)
+        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+        .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+        .expect("Failed to preload function with no predecessors.");
+    (
+        graph_structure,
+        predecessor_counts,
+        fn_ready_tx,
+        fn_ready_rx,
+        fn_done_tx,
+        fn_done_rx,
+    )
+}
+
+fn stream_setup_init_concurrent<'f>(
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
+    edge_counts: &EdgeCounts,
+    opts: FnGraphStreamOpts<'f>,
 ) -> (
     &'f Dag<(), Edge, FnIdInner>,
     Receiver<daggy::NodeIndex<FnIdInner>>,
@@ -1185,20 +1229,13 @@ fn stream_setup_init<'f>(
         marker: _,
     } = opts;
 
-    let (graph_structure, predecessor_counts) = match stream_order {
-        StreamOrder::Forward => (graph_structure, edge_counts.incoming().to_vec()),
-        StreamOrder::Reverse => (graph_structure_rev, edge_counts.outgoing().to_vec()),
-    };
-    let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-    let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
-    let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
-
-    // Preload the channel with all of the functions that have no predecessors
-    Topo::new(graph_structure)
-        .iter(graph_structure)
-        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-        .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-        .expect("Failed to preload function with no predecessors.");
+    let (graph_structure, predecessor_counts, fn_ready_tx, fn_ready_rx, fn_done_tx, fn_done_rx) =
+        stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            stream_order,
+        );
 
     let queuer = fn_ready_queuer(
         graph_structure,
