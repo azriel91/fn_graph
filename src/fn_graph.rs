@@ -254,7 +254,7 @@ impl<F> FnGraph<F> {
         &mut self,
         seed: Seed,
         fn_fold: FnFold,
-    ) -> StreamOutcome<Option<Seed>>
+    ) -> StreamOutcome<Seed>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -272,7 +272,7 @@ impl<F> FnGraph<F> {
         seed: Seed,
         opts: StreamOpts<'f>,
         fn_fold: FnFold,
-    ) -> StreamOutcome<Option<Seed>>
+    ) -> StreamOutcome<Seed>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -285,7 +285,7 @@ impl<F> FnGraph<F> {
         seed: Seed,
         opts: StreamOpts<'f>,
         fn_fold: FnFold,
-    ) -> StreamOutcome<Option<Seed>>
+    ) -> StreamOutcome<Seed>
     where
         FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
     {
@@ -384,7 +384,7 @@ impl<F> FnGraph<F> {
 
         let (fn_graph_stream_outcome, seed) = futures::join!(queuer, scheduler);
 
-        fn_graph_stream_outcome.map(|()| Some(seed))
+        fn_graph_stream_outcome.map(|()| seed)
     }
 
     /// Runs the provided logic over the functions concurrently in topological
