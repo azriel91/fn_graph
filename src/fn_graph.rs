@@ -252,7 +252,7 @@ impl<F> FnGraph<F> {
     #[cfg(feature = "async")]
     pub async fn fold_async<Seed, FnFold>(&self, seed: Seed, fn_fold: FnFold) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &F) -> LocalBoxFuture<'_, Seed>,
+        FnFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Seed>,
     {
         self.fold_async_internal(seed, StreamOpts::default(), fn_fold)
             .await
@@ -270,7 +270,7 @@ impl<F> FnGraph<F> {
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &F) -> LocalBoxFuture<'_, Seed>,
+        FnFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Seed>,
     {
         self.fold_async_internal(seed, opts, fn_fold).await
     }
@@ -283,7 +283,7 @@ impl<F> FnGraph<F> {
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &F) -> LocalBoxFuture<'_, Seed>,
+        FnFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Seed>,
     {
         let FnGraph {
             ref graph,
@@ -343,7 +343,7 @@ impl<F> FnGraph<F> {
                         mut fns_remaining,
                         mut fn_done_tx,
                         seed,
-                        mut fn_fold,
+                        fn_fold,
                     } = fold_stream_state;
                     let r#fn = &graph[fn_id];
                     let seed = fn_fold(seed, r#fn).await;
@@ -749,7 +749,7 @@ impl<F> FnGraph<F> {
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: FnMut(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        FnTryFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
     {
         self.try_fold_async_internal(seed, StreamOpts::default(), fn_try_fold)
             .await
@@ -778,7 +778,7 @@ impl<F> FnGraph<F> {
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: FnMut(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        FnTryFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
     {
         self.try_fold_async_internal(seed, opts, fn_try_fold).await
     }
@@ -791,7 +791,7 @@ impl<F> FnGraph<F> {
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: FnMut(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        FnTryFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
     {
         let FnGraph {
             ref graph,
@@ -852,7 +852,7 @@ impl<F> FnGraph<F> {
                         mut fns_remaining,
                         mut fn_done_tx,
                         seed,
-                        fn_fold: mut fn_try_fold,
+                        fn_fold: fn_try_fold,
                     } = fold_stream_state;
                     let r#fn = &graph[fn_id];
                     let seed = fn_try_fold(seed, r#fn).await?;
