@@ -263,10 +263,10 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async_with<'f, Seed, FnFold>(
+    pub async fn fold_async_with<Seed, FnFold>(
         &self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -276,10 +276,10 @@ impl<F> FnGraph<F> {
     }
 
     #[cfg(feature = "async")]
-    async fn fold_async_internal<'f, Seed, FnFold>(
-        &'f self,
+    async fn fold_async_internal<Seed, FnFold>(
+        &self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -405,10 +405,10 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async_mut_with<'f, Seed, FnFold>(
+    pub async fn fold_async_mut_with<Seed, FnFold>(
         &mut self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -418,10 +418,10 @@ impl<F> FnGraph<F> {
     }
 
     #[cfg(feature = "async")]
-    async fn fold_async_mut_internal<'f, Seed, FnFold>(
-        &'f mut self,
+    async fn fold_async_mut_internal<Seed, FnFold>(
+        &mut self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -771,10 +771,10 @@ impl<F> FnGraph<F> {
     /// * if an error is encountered in the provided closure.
     /// * if an interrupt signal is received.
     #[cfg(feature = "async")]
-    pub async fn try_fold_async_with<'f, E, Seed, FnTryFold>(
+    pub async fn try_fold_async_with<E, Seed, FnTryFold>(
         &self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
@@ -784,10 +784,10 @@ impl<F> FnGraph<F> {
     }
 
     #[cfg(feature = "async")]
-    async fn try_fold_async_internal<'f, E, Seed, FnTryFold>(
-        &'f self,
+    async fn try_fold_async_internal<E, Seed, FnTryFold>(
+        &self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
@@ -928,10 +928,10 @@ impl<F> FnGraph<F> {
     /// * if an error is encountered in the provided closure.
     /// * if an interrupt signal is received.
     #[cfg(feature = "async")]
-    pub async fn try_fold_async_mut_with<'f, E, Seed, FnTryFold>(
+    pub async fn try_fold_async_mut_with<E, Seed, FnTryFold>(
         &mut self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
@@ -942,10 +942,10 @@ impl<F> FnGraph<F> {
     }
 
     #[cfg(feature = "async")]
-    async fn try_fold_async_mut_internal<'f, E, Seed, FnTryFold>(
-        &'f mut self,
+    async fn try_fold_async_mut_internal<E, Seed, FnTryFold>(
+        &mut self,
         seed: Seed,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
