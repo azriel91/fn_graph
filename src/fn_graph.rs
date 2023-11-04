@@ -145,6 +145,13 @@ impl<F> FnGraph<F> {
     ///
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
+    ///
+    /// # Note
+    ///
+    /// This returns a stream whose item is wrapped in [`PollOutcome`]. For
+    /// interruptible support where `StreamOutcome` is desired, you may wish to
+    /// use [`fold_async_with`][FnGraph::fold_async_with] or
+    /// [`try_fold_async_with`][FnGraph::try_fold_async_with],
     #[cfg(all(feature = "async", feature = "interruptible"))]
     pub fn stream_with<'rx>(
         &'rx self,
