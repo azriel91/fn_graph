@@ -122,14 +122,18 @@ mod rank;
 mod type_ids;
 
 #[cfg(feature = "async")]
-pub use crate::fn_ref::FnRef;
-#[cfg(feature = "async")]
-pub use stream_opts::StreamOpts;
+pub use crate::{
+    fn_ref::FnRef, fn_wrapper::FnWrapper, fn_wrapper_mut::FnWrapperMut, stream_opts::StreamOpts,
+};
 #[cfg(feature = "async")]
 pub(crate) use stream_order::StreamOrder;
 
 #[cfg(feature = "async")]
 mod fn_ref;
+#[cfg(feature = "async")]
+mod fn_wrapper;
+#[cfg(feature = "async")]
+mod fn_wrapper_mut;
 #[cfg(feature = "async")]
 mod stream_opts;
 #[cfg(feature = "async")]

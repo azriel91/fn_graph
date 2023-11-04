@@ -14,8 +14,10 @@ use crate::{Edge, FnId, FnIdInner, Rank};
 #[cfg(feature = "async")]
 use daggy::NodeIndex;
 #[cfg(feature = "async")]
+use futures::future::LocalBoxFuture;
+#[cfg(feature = "async")]
 use futures::{
-    future::{Future, LocalBoxFuture},
+    future::Future,
     stream::{self, Stream, StreamExt, TryStreamExt},
     task::Poll,
 };
@@ -27,8 +29,8 @@ use tokio::sync::{
 
 #[cfg(feature = "async")]
 use crate::{
-    EdgeCounts, FnRef, StreamOpts, StreamOrder, StreamOutcome, StreamOutcomeState, StreamProgress,
-    StreamProgressState,
+    EdgeCounts, FnRef, FnWrapper, FnWrapperMut, StreamOpts, StreamOrder, StreamOutcome,
+    StreamOutcomeState, StreamProgress, StreamProgressState,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
@@ -43,6 +45,10 @@ use interruptible::{
 /// Besides the `iter_insertion*` function, all iteration functions run using
 /// topological ordering -- where each function is ordered before its
 /// successors.
+///
+/// # Type Parameters
+///
+/// * `F`: Type of the function stored in the graph.
 #[derive(Clone, Debug)]
 pub struct FnGraph<F> {
     /// Graph of functions.
@@ -250,9 +256,14 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async<Seed, FnFold>(&self, seed: Seed, fn_fold: FnFold) -> StreamOutcome<Seed>
+    pub async fn fold_async<'f, Seed, FnFold>(
+        &'f self,
+        seed: Seed,
+        fn_fold: FnFold,
+    ) -> StreamOutcome<Seed>
     where
-        FnFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
         self.fold_async_internal(seed, StreamOpts::default(), fn_fold)
             .await
@@ -263,27 +274,29 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async_with<Seed, FnFold>(
-        &self,
+    pub async fn fold_async_with<'f, Seed, FnFold>(
+        &'f self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
-        FnFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
         self.fold_async_internal(seed, opts, fn_fold).await
     }
 
     #[cfg(feature = "async")]
-    async fn fold_async_internal<Seed, FnFold>(
-        &self,
+    async fn fold_async_internal<'f, Seed, FnFold>(
+        &'f self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
-        FnFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
         let FnGraph {
             ref graph,
@@ -346,7 +359,7 @@ impl<F> FnGraph<F> {
                         fn_fold,
                     } = fold_stream_state;
                     let r#fn = &graph[fn_id];
-                    let seed = fn_fold(seed, r#fn).await;
+                    let seed = fn_fold(seed, FnWrapper::new(r#fn)).await;
                     if let Some(fn_done_tx) = fn_done_tx.as_ref() {
                         fn_done_send(fn_done_tx, fn_id).await;
                     }
@@ -388,13 +401,14 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async_mut<Seed, FnFold>(
-        &mut self,
+    pub async fn fold_async_mut<'f, Seed, FnFold>(
+        &'f mut self,
         seed: Seed,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
         self.fold_async_mut_internal(seed, StreamOpts::default(), fn_fold)
             .await
@@ -405,27 +419,29 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async_mut_with<Seed, FnFold>(
-        &mut self,
+    pub async fn fold_async_mut_with<'f, Seed, FnFold>(
+        &'f mut self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
         self.fold_async_mut_internal(seed, opts, fn_fold).await
     }
 
     #[cfg(feature = "async")]
-    async fn fold_async_mut_internal<Seed, FnFold>(
-        &mut self,
+    async fn fold_async_mut_internal<'f, Seed, FnFold>(
+        &'f mut self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
         let FnGraph {
             ref mut graph,
@@ -488,7 +504,7 @@ impl<F> FnGraph<F> {
                         mut fn_fold,
                     } = fold_stream_state;
                     let r#fn = &mut graph[fn_id];
-                    let seed = fn_fold(seed, r#fn).await;
+                    let seed = fn_fold(seed, FnWrapperMut::new(r#fn)).await;
                     if let Some(fn_done_tx) = fn_done_tx.as_ref() {
                         fn_done_send(fn_done_tx, fn_id).await;
                     }
@@ -743,13 +759,15 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn try_fold_async<E, Seed, FnTryFold>(
-        &self,
+    pub async fn try_fold_async<'f, E, Seed, FnTryFold>(
+        &'f self,
         seed: Seed,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        for<'iter> FnTryFold:
+            Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
     {
         self.try_fold_async_internal(seed, StreamOpts::default(), fn_try_fold)
             .await
@@ -771,27 +789,31 @@ impl<F> FnGraph<F> {
     /// * if an error is encountered in the provided closure.
     /// * if an interrupt signal is received.
     #[cfg(feature = "async")]
-    pub async fn try_fold_async_with<E, Seed, FnTryFold>(
-        &self,
+    pub async fn try_fold_async_with<'f, E, Seed, FnTryFold>(
+        &'f self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        for<'iter> FnTryFold:
+            Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
     {
         self.try_fold_async_internal(seed, opts, fn_try_fold).await
     }
 
     #[cfg(feature = "async")]
-    async fn try_fold_async_internal<E, Seed, FnTryFold>(
-        &self,
+    async fn try_fold_async_internal<'f, E, Seed, FnTryFold>(
+        &'f self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: Fn(Seed, &F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        for<'iter> FnTryFold:
+            Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
     {
         let FnGraph {
             ref graph,
@@ -855,7 +877,7 @@ impl<F> FnGraph<F> {
                         fn_fold: fn_try_fold,
                     } = fold_stream_state;
                     let r#fn = &graph[fn_id];
-                    let seed = fn_try_fold(seed, r#fn).await?;
+                    let seed = fn_try_fold(seed, FnWrapper::new(r#fn)).await?;
                     if let Some(fn_done_tx) = fn_done_tx.as_ref() {
                         fn_done_send(fn_done_tx, fn_id).await;
                     }
@@ -900,13 +922,15 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn try_fold_async_mut<E, Seed, FnTryFold>(
-        &mut self,
+    pub async fn try_fold_async_mut<'f, E, Seed, FnTryFold>(
+        &'f mut self,
         seed: Seed,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        for<'iter> FnTryFold:
+            FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
     {
         self.try_fold_async_mut_internal(seed, StreamOpts::default(), fn_try_fold)
             .await
@@ -928,28 +952,32 @@ impl<F> FnGraph<F> {
     /// * if an error is encountered in the provided closure.
     /// * if an interrupt signal is received.
     #[cfg(feature = "async")]
-    pub async fn try_fold_async_mut_with<E, Seed, FnTryFold>(
-        &mut self,
+    pub async fn try_fold_async_mut_with<'f, E, Seed, FnTryFold>(
+        &'f mut self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        for<'iter> FnTryFold:
+            FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
     {
         self.try_fold_async_mut_internal(seed, opts, fn_try_fold)
             .await
     }
 
     #[cfg(feature = "async")]
-    async fn try_fold_async_mut_internal<E, Seed, FnTryFold>(
-        &mut self,
+    async fn try_fold_async_mut_internal<'f, E, Seed, FnTryFold>(
+        &'f mut self,
         seed: Seed,
         opts: StreamOpts<'_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
-        FnTryFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Result<Seed, E>>,
+        for<'iter> FnTryFold:
+            FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
     {
         let FnGraph {
             ref mut graph,
@@ -1013,7 +1041,7 @@ impl<F> FnGraph<F> {
                         fn_fold: mut fn_try_fold,
                     } = fold_stream_state;
                     let r#fn = &mut graph[fn_id];
-                    let seed = fn_try_fold(seed, r#fn).await?;
+                    let seed = fn_try_fold(seed, FnWrapperMut::new(r#fn)).await?;
                     if let Some(fn_done_tx) = fn_done_tx.as_ref() {
                         fn_done_send(fn_done_tx, fn_id).await;
                     }
@@ -2637,7 +2665,7 @@ mod tests {
                 .fold_async(
                     (),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async {}),
+                    |(), _f| async {}.boxed_local(),
                 )
                 .await;
         }
@@ -2653,10 +2681,11 @@ mod tests {
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
                 fn_graph.fold_async(resources, |resources, f| {
-                    Box::pin(async move {
+                    async move {
                         f.call(&resources).await;
                         resources
-                    })
+                    }
+                    .boxed_local()
                 }),
             )
             .await;
@@ -2696,10 +2725,11 @@ mod tests {
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
                 fn_graph.fold_async_with(resources, StreamOpts::new().rev(), |resources, f| {
-                    Box::pin(async move {
+                    async move {
                         f.call(&resources).await;
                         resources
-                    })
+                    }
+                    .boxed_local()
                 }),
             )
             .await;
@@ -2721,7 +2751,7 @@ mod tests {
                 .fold_async_mut(
                     (),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async {}),
+                    |(), _f| async {}.boxed_local(),
                 )
                 .await;
         }
@@ -2736,11 +2766,12 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
-                fn_graph.fold_async_mut(resources, |resources, f| {
-                    Box::pin(async move {
+                fn_graph.fold_async_mut(resources, |resources, mut f| {
+                    async move {
                         f.call_mut(&resources).await;
                         resources
-                    })
+                    }
+                    .boxed_local()
                 }),
             )
             .await;
@@ -2762,7 +2793,7 @@ mod tests {
                     (),
                     StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async {}),
+                    |(), _f| async {}.boxed_local(),
                 )
                 .await;
         }
@@ -2778,12 +2809,17 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
-                fn_graph.fold_async_mut_with(resources, StreamOpts::new().rev(), |resources, f| {
-                    Box::pin(async move {
-                        f.call_mut(&resources).await;
-                        resources
-                    })
-                }),
+                fn_graph.fold_async_mut_with(
+                    resources,
+                    StreamOpts::new().rev(),
+                    |resources, mut f| {
+                        async move {
+                            f.call_mut(&resources).await;
+                            resources
+                        }
+                        .boxed_local()
+                    },
+                ),
             )
             .await;
 
@@ -2916,7 +2952,7 @@ mod tests {
                 .try_fold_async(
                     (),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async { Result::<_, TestError>::Ok(()) }),
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
                 )
                 .await?;
 
@@ -2934,10 +2970,11 @@ mod tests {
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
                 fn_graph.try_fold_async(resources, |resources, f| {
-                    Box::pin(async move {
+                    async move {
                         f.call(&resources).await;
                         Result::<_, TestError>::Ok(resources)
-                    })
+                    }
+                    .boxed_local()
                 }),
             )
             .await?;
@@ -2960,7 +2997,7 @@ mod tests {
                     (),
                     StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async { Result::<_, TestError>::Ok(()) }),
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
                 )
                 .await?;
 
@@ -2979,10 +3016,11 @@ mod tests {
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
                 fn_graph.try_fold_async_with(resources, StreamOpts::new().rev(), |resources, f| {
-                    Box::pin(async move {
+                    async move {
                         f.call(&resources).await;
                         Result::<_, TestError>::Ok(resources)
-                    })
+                    }
+                    .boxed_local()
                 }),
             )
             .await?;
@@ -3004,7 +3042,7 @@ mod tests {
                 .try_fold_async_mut(
                     (),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async { Result::<_, TestError>::Ok(()) }),
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
                 )
                 .await?;
 
@@ -3022,11 +3060,12 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
-                fn_graph.try_fold_async_mut(resources, |resources, f| {
-                    Box::pin(async move {
+                fn_graph.try_fold_async_mut(resources, |resources, mut f| {
+                    async move {
                         f.call_mut(&resources).await;
                         Result::<_, TestError>::Ok(resources)
-                    })
+                    }
+                    .boxed_local()
                 }),
             )
             .await?;
@@ -3048,7 +3087,7 @@ mod tests {
                     (),
                     StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async { Result::<_, TestError>::Ok(()) }),
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
                 )
                 .await?;
 
@@ -3069,11 +3108,12 @@ mod tests {
                 fn_graph.try_fold_async_mut_with(
                     resources,
                     StreamOpts::new().rev(),
-                    |resources, f| {
-                        Box::pin(async move {
+                    |resources, mut f| {
+                        async move {
                             f.call_mut(&resources).await;
                             Result::<_, TestError>::Ok(resources)
-                        })
+                        }
+                        .boxed_local()
                     },
                 ),
             )
