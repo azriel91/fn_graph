@@ -161,10 +161,7 @@ impl<F> FnGraph<F> {
     }
 
     #[cfg(feature = "async")]
-    fn stream_internal<'f>(
-        &'f self,
-        stream_order: StreamOrder,
-    ) -> impl Stream<Item = FnRef<'f, F>> + 'f {
+    fn stream_internal(&self, stream_order: StreamOrder) -> impl Stream<Item = FnRef<'_, F>> + '_ {
         let FnGraph {
             ref graph,
             ref graph_structure,

@@ -27,6 +27,6 @@ impl<'iter, 'graph, F> Deref for FnWrapper<'iter, 'graph, F> {
     type Target = F;
 
     fn deref(&self) -> &Self::Target {
-        &self.f
+        self.f
     }
 }

@@ -30,12 +30,12 @@ impl<'iter, 'graph, F> Deref for FnWrapperMut<'iter, 'graph, F> {
     type Target = F;
 
     fn deref(&self) -> &Self::Target {
-        &self.f
+        self.f
     }
 }
 
 impl<'iter, 'graph, F> DerefMut for FnWrapperMut<'iter, 'graph, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.f
+        self.f
     }
 }
