@@ -46,6 +46,26 @@ impl<T> StreamOutcome<T> {
         }
     }
 
+    /// Replaces the value from this outcome with another.
+    pub fn replace<TNew>(self, value_new: TNew) -> (StreamOutcome<TNew>, T) {
+        let StreamOutcome {
+            value: value_existing,
+            state,
+            fn_ids_processed,
+            fn_ids_not_processed,
+        } = self;
+
+        (
+            StreamOutcome {
+                value: value_new,
+                state,
+                fn_ids_processed,
+                fn_ids_not_processed,
+            },
+            value_existing,
+        )
+    }
+
     pub fn into_value(self) -> T {
         self.value
     }
@@ -122,5 +142,25 @@ impl From<StreamProgressState> for StreamOutcomeState {
             StreamProgressState::InProgress => Self::Interrupted,
             StreamProgressState::Finished => Self::Finished,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::FnId;
+
+    use super::StreamOutcome;
+
+    #[test]
+    fn replace() {
+        let stream_outcome = StreamOutcome::finished_with(1u16, vec![FnId::new(0)]);
+
+        let (stream_outcome, n) = stream_outcome.replace(2u32);
+
+        assert_eq!(1u16, n);
+        assert_eq!(
+            StreamOutcome::finished_with(2u32, vec![FnId::new(0)]),
+            stream_outcome
+        );
     }
 }
