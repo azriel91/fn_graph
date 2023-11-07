@@ -127,6 +127,12 @@ impl<T> From<StreamProgress<T>> for StreamOutcome<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamOutcomeState {
     /// The stream was not started, so no items were processed.
+    ///
+    /// If a `StreamOutcome` ends with this state, it means the stream was never
+    /// polled.
+    ///
+    /// If a stream is interrupted between the first poll, and that future's
+    /// completion, the state will be `StreamOutcomeState::Interrupted`.
     NotStarted,
     /// The stream was interrupted during processing.
     Interrupted,
