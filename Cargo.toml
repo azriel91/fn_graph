@@ -41,4 +41,4 @@ name = "simple"
 required-features = ["fn_meta"]
 
 [patch.crates-io]
-interruptible = { git = "git@github.com:azriel91/interruptible.git", branch = "feature/interrupt-strategy" }
+interruptible = { path = "/mnt/data/work/github/azriel91/interruptible" }
