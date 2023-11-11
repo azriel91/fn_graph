@@ -34,10 +34,7 @@ use crate::{
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{
-    interrupt_strategy::{FinishCurrent, PollNextN},
-    interruptibility::Interruptibility,
-    InterruptStrategy, InterruptStrategyT, InterruptibleStream, InterruptibleStreamExt,
-    PollOutcome, PollOutcomeNRemaining,
+    InterruptibilityState, InterruptibleStream, InterruptibleStreamExt, PollOutcome,
 };
 
 /// Directed acyclic graph of functions.
@@ -131,7 +128,7 @@ impl<F> FnGraph<F> {
     #[cfg(all(feature = "async", not(feature = "interruptible")))]
     pub fn stream_with<'rx>(
         &'rx self,
-        opts: StreamOpts<'rx>,
+        opts: StreamOpts<'rx, 'rx>,
     ) -> impl Stream<Item = FnRef<'rx, F>> + 'rx {
         let StreamOpts {
             stream_order,
@@ -155,16 +152,16 @@ impl<F> FnGraph<F> {
     #[cfg(all(feature = "async", feature = "interruptible"))]
     pub fn stream_with<'rx>(
         &'rx self,
-        opts: StreamOpts<'rx>,
+        opts: StreamOpts<'rx, 'rx>,
     ) -> impl Stream<Item = PollOutcome<FnRef<'rx, F>>> + 'rx {
         let StreamOpts {
             stream_order,
-            interruptibility,
+            interruptibility_state,
             marker: _,
         } = opts;
 
         self.stream_internal(stream_order)
-            .with_interruptible_item(interruptibility)
+            .interruptible_with(interruptibility_state)
     }
 
     #[cfg(feature = "async")]
@@ -281,7 +278,7 @@ impl<F> FnGraph<F> {
     pub async fn fold_async_with<'f, Seed, FnFold>(
         &'f self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -295,7 +292,7 @@ impl<F> FnGraph<F> {
     async fn fold_async_internal<'f, Seed, FnFold>(
         &'f self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -313,7 +310,7 @@ impl<F> FnGraph<F> {
         let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
             marker: _,
         } = opts;
 
@@ -337,7 +334,7 @@ impl<F> FnGraph<F> {
             fn_done_rx,
             fn_ready_tx,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
         );
 
         let fns_remaining = graph_structure.node_count();
@@ -426,7 +423,7 @@ impl<F> FnGraph<F> {
     pub async fn fold_async_mut_with<'f, Seed, FnFold>(
         &'f mut self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -440,7 +437,7 @@ impl<F> FnGraph<F> {
     async fn fold_async_mut_internal<'f, Seed, FnFold>(
         &'f mut self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_fold: FnFold,
     ) -> StreamOutcome<Seed>
     where
@@ -458,7 +455,7 @@ impl<F> FnGraph<F> {
         let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
             marker: _,
         } = opts;
 
@@ -482,7 +479,7 @@ impl<F> FnGraph<F> {
             fn_done_rx,
             fn_ready_tx,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
         );
 
         let fns_remaining = graph_structure.node_count();
@@ -586,7 +583,7 @@ impl<F> FnGraph<F> {
     pub async fn for_each_concurrent_with<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -603,7 +600,7 @@ impl<F> FnGraph<F> {
     async fn for_each_concurrent_internal<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -690,7 +687,7 @@ impl<F> FnGraph<F> {
     pub async fn for_each_concurrent_mut_with<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -706,7 +703,7 @@ impl<F> FnGraph<F> {
     async fn for_each_concurrent_mut_internal<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
     ) -> StreamOutcome<()>
     where
@@ -796,7 +793,7 @@ impl<F> FnGraph<F> {
     pub async fn try_fold_async_with<'f, E, Seed, FnTryFold>(
         &'f self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
@@ -811,7 +808,7 @@ impl<F> FnGraph<F> {
     async fn try_fold_async_internal<'f, E, Seed, FnTryFold>(
         &'f self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
@@ -830,7 +827,7 @@ impl<F> FnGraph<F> {
         let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
             marker: _,
         } = opts;
 
@@ -854,7 +851,7 @@ impl<F> FnGraph<F> {
             fn_done_rx,
             fn_ready_tx,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
         );
 
         let fns_remaining = graph_structure.node_count();
@@ -959,7 +956,7 @@ impl<F> FnGraph<F> {
     pub async fn try_fold_async_mut_with<'f, E, Seed, FnTryFold>(
         &'f mut self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
@@ -975,7 +972,7 @@ impl<F> FnGraph<F> {
     async fn try_fold_async_mut_internal<'f, E, Seed, FnTryFold>(
         &'f mut self,
         seed: Seed,
-        opts: StreamOpts<'_>,
+        opts: StreamOpts<'_, '_>,
         fn_try_fold: FnTryFold,
     ) -> Result<StreamOutcome<Seed>, E>
     where
@@ -994,7 +991,7 @@ impl<F> FnGraph<F> {
         let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
             marker: _,
         } = opts;
 
@@ -1018,7 +1015,7 @@ impl<F> FnGraph<F> {
             fn_done_rx,
             fn_ready_tx,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
         );
 
         let fns_remaining = graph_structure.node_count();
@@ -1134,7 +1131,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -1209,7 +1206,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_control_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
     ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
@@ -1244,7 +1241,7 @@ impl<F> FnGraph<F> {
     async fn try_for_each_concurrent_internal<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -1255,7 +1252,7 @@ impl<F> FnGraph<F> {
         let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
             marker: _,
         } = opts;
 
@@ -1284,7 +1281,7 @@ impl<F> FnGraph<F> {
             fn_done_rx,
             fn_ready_tx,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
         );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
@@ -1385,7 +1382,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -1460,7 +1457,7 @@ impl<F> FnGraph<F> {
     pub async fn try_for_each_concurrent_control_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
     ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
@@ -1495,7 +1492,7 @@ impl<F> FnGraph<F> {
     async fn try_for_each_concurrent_mut_internal<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
-        opts: StreamOpts<'f>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
     ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
@@ -1506,7 +1503,7 @@ impl<F> FnGraph<F> {
         let StreamOpts {
             stream_order,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
             marker: _,
         } = opts;
 
@@ -1535,7 +1532,7 @@ impl<F> FnGraph<F> {
             fn_done_rx,
             fn_ready_tx,
             #[cfg(feature = "interruptible")]
-            interruptibility,
+            interruptibility_state,
         );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
@@ -1776,12 +1773,12 @@ fn stream_setup_init_concurrent<'f>(
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
-    opts: StreamOpts<'f>,
+    opts: StreamOpts<'f, 'f>,
 ) -> StreamSetupInitConcurrent<'f, impl Future<Output = StreamOutcome<()>> + 'f> {
     let StreamOpts {
         stream_order,
         #[cfg(feature = "interruptible")]
-        interruptibility,
+        interruptibility_state,
         marker: _,
     } = opts;
 
@@ -1805,7 +1802,7 @@ fn stream_setup_init_concurrent<'f>(
         fn_done_rx,
         fn_ready_tx,
         #[cfg(feature = "interruptible")]
-        interruptibility,
+        interruptibility_state,
     );
 
     let fn_done_tx = RwLock::new(Some(fn_done_tx));
@@ -1824,11 +1821,11 @@ fn stream_setup_init_concurrent<'f>(
 /// `fn_ready_tx`.
 #[cfg(feature = "async")]
 async fn fn_ready_queuer<'f>(
-    graph_structure: &Dag<(), Edge, FnIdInner>,
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
     predecessor_counts: Vec<usize>,
     mut fn_done_rx: Receiver<FnId>,
     fn_ready_tx: Sender<FnId>,
-    #[cfg(feature = "interruptible")] interruptibility: Interruptibility<'f>,
+    #[cfg(feature = "interruptible")] interruptibility_state: InterruptibilityState<'f, '_>,
 ) -> StreamOutcome<()> {
     let fns_remaining = graph_structure.node_count();
     let mut fn_graph_stream_progress = StreamProgress::with_capacity((), fns_remaining);
@@ -1848,76 +1845,24 @@ async fn fn_ready_queuer<'f>(
     }
 
     #[cfg(feature = "interruptible")]
-    match interruptibility {
-        Interruptibility::NonInterruptible => {
-            let queuer_stream_state =
-                QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
-            queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
-        }
-        Interruptibility::Interruptible {
-            interrupt_rx,
-            interrupt_strategy,
-        } => match interrupt_strategy {
-            InterruptStrategy::IgnoreInterruptions => {
-                let queuer_stream_state =
-                    QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
-                queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
-            }
-            InterruptStrategy::FinishCurrent => {
-                let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
-                    fns_remaining,
-                    predecessor_counts,
-                    fn_ready_tx,
-                    fn_graph_stream_progress,
-                };
-                queuer_stream_fold_interruptible::<
-                    PollOutcome<NodeIndex<FnIdInner>>,
-                    _,
-                    FinishCurrent,
-                >(
-                    stream.interruptible_with(interrupt_rx, FinishCurrent),
-                    queuer_stream_state_interruptible,
-                    graph_structure,
-                    |stream_outcome| match stream_outcome {
-                        PollOutcome::InterruptBeforePoll => (None, true),
-                        PollOutcome::InterruptDuringPoll(fn_id) => (Some(fn_id), true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    },
-                )
-                .await
-            }
-            InterruptStrategy::PollNextN(n) => {
-                let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
-                    fns_remaining,
-                    predecessor_counts,
-                    fn_ready_tx,
-                    fn_graph_stream_progress,
-                };
-                queuer_stream_fold_interruptible::<
-                    PollOutcomeNRemaining<NodeIndex<FnIdInner>>,
-                    _,
-                    PollNextN,
-                >(
-                    stream.interruptible_with(interrupt_rx, PollNextN(n)),
-                    queuer_stream_state_interruptible,
-                    graph_structure,
-                    |stream_outcome_n_remaining| match stream_outcome_n_remaining {
-                        PollOutcomeNRemaining::InterruptBeforePoll => (None, true),
-                        PollOutcomeNRemaining::InterruptDuringPoll {
-                            value: fn_id,
-                            n_remaining: _,
-                        } => (Some(fn_id), true),
-                        PollOutcomeNRemaining::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    },
-                )
-                .await
-            }
-        },
+    {
+        let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
+            fns_remaining,
+            predecessor_counts,
+            fn_ready_tx,
+            fn_graph_stream_progress,
+        };
+        queuer_stream_fold_interruptible(
+            stream.interruptible_with(interruptibility_state),
+            queuer_stream_state_interruptible,
+            graph_structure,
+        )
+        .await
     }
 }
 
 /// Polls the queuer stream until completed.
-#[cfg(feature = "async")]
+#[cfg(all(feature = "async", not(feature = "interruptible")))]
 async fn queuer_stream_fold(
     stream: stream::PollFn<
         impl FnMut(&mut std::task::Context) -> Poll<Option<NodeIndex<FnIdInner>>>,
@@ -1985,21 +1930,19 @@ async fn queuer_stream_fold(
 
 /// Polls the queuer stream until completed or interrupted.
 #[cfg(all(feature = "async", feature = "interruptible"))]
-async fn queuer_stream_fold_interruptible<'stream, StrmOutcome, S, IS>(
-    stream: InterruptibleStream<'stream, S, IS>,
+async fn queuer_stream_fold_interruptible<'rx, 'intx, S>(
+    stream: InterruptibleStream<'rx, 'intx, S>,
     queuer_stream_state_interruptible: QueuerStreamStateInterruptible,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-    fn_id_from_outcome: fn(StrmOutcome) -> (Option<NodeIndex<FnIdInner>>, bool),
 ) -> StreamOutcome<()>
 where
     S: Stream<Item = NodeIndex<FnIdInner>>,
-    InterruptibleStream<'stream, S, IS>: Stream<Item = StrmOutcome>,
-    IS: InterruptStrategyT,
+    InterruptibleStream<'rx, 'intx, S>: Stream<Item = PollOutcome<FnId>>,
 {
     let queuer_stream_state_interruptible = stream
         .fold(
             queuer_stream_state_interruptible,
-            move |queuer_stream_state_interruptible, stream_outcome| async move {
+            move |queuer_stream_state_interruptible, poll_outcome| async move {
                 let QueuerStreamStateInterruptible {
                     mut fns_remaining,
                     mut predecessor_counts,
@@ -2014,7 +1957,10 @@ where
                     ref mut fn_ids_not_processed,
                 } = &mut fn_graph_stream_progress;
 
-                let (fn_id, interrupted) = fn_id_from_outcome(stream_outcome);
+                let (fn_id, interrupted) = match poll_outcome {
+                    PollOutcome::Interrupted(fn_id_opt) => (fn_id_opt, true),
+                    PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                };
 
                 // Close `fn_ready_rx` when all functions have been executed,
                 fns_remaining -= 1;
@@ -2084,6 +2030,7 @@ where
     StreamOutcome::from(fn_graph_stream_progress)
 }
 
+#[cfg(feature = "async")]
 struct StreamSetupInit<'f> {
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
     predecessor_counts: Vec<usize>,
@@ -2093,6 +2040,7 @@ struct StreamSetupInit<'f> {
     fn_done_rx: Receiver<NodeIndex<FnIdInner>>,
 }
 
+#[cfg(feature = "async")]
 struct StreamSetupInitConcurrent<'f, QueuerFut> {
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
     fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
@@ -2129,7 +2077,7 @@ struct FoldStreamStateMut<'f, F, Seed, FnFold> {
     fn_fold: FnFold,
 }
 
-#[cfg(feature = "async")]
+#[cfg(all(feature = "async", not(feature = "interruptible")))]
 struct QueuerStreamState {
     /// Number of functions in the graph remaining to execute.
     fns_remaining: usize,
@@ -2141,7 +2089,7 @@ struct QueuerStreamState {
     fn_ids_processed: Vec<FnId>,
 }
 
-#[cfg(feature = "async")]
+#[cfg(all(feature = "async", not(feature = "interruptible")))]
 impl QueuerStreamState {
     fn new(
         fns_remaining: usize,
@@ -2643,8 +2591,8 @@ mod tests {
 
                         #[cfg(feature = "interruptible")]
                         match f {
-                            PollOutcome::InterruptBeforePoll => {}
-                            PollOutcome::InterruptDuringPoll(f) | PollOutcome::NoInterrupt(f) => {
+                            PollOutcome::Interrupted(None) => {}
+                            PollOutcome::Interrupted(Some(f)) | PollOutcome::NoInterrupt(f) => {
                                 let _ = f.call(resources).await;
                             }
                         }

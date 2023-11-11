@@ -1,23 +1,23 @@
 use std::marker::PhantomData;
 
 #[cfg(feature = "interruptible")]
-use interruptible::interruptibility::Interruptibility;
+use interruptible::{Interruptibility, InterruptibilityState};
 
 use crate::StreamOrder;
 
 /// How to stream item from the graph.
 #[derive(Debug)]
-pub struct StreamOpts<'rx> {
+pub struct StreamOpts<'rx, 'intx> {
     /// Order to stream items.
     pub(crate) stream_order: StreamOrder,
     /// Whether the stream is interruptible
     #[cfg(feature = "interruptible")]
-    pub(crate) interruptibility: Interruptibility<'rx>,
+    pub(crate) interruptibility_state: InterruptibilityState<'rx, 'intx>,
     /// Marker.
-    pub(crate) marker: PhantomData<&'rx ()>,
+    pub(crate) marker: PhantomData<&'intx &'rx ()>,
 }
 
-impl<'rx> StreamOpts<'rx> {
+impl<'rx, 'intx> StreamOpts<'rx, 'intx> {
     /// Returns a new `FnGraphStreamOpts` with forward iteration and
     /// non-interruptibility.
     pub fn new() -> Self {
@@ -32,20 +32,23 @@ impl<'rx> StreamOpts<'rx> {
         self
     }
 
-    /// Sets the interruptibility of the stream.
+    /// Sets the interruptibility_state of the stream.
     #[cfg(feature = "interruptible")]
-    pub fn interruptibility(mut self, interruptibility: Interruptibility<'rx>) -> Self {
-        self.interruptibility = interruptibility;
+    pub fn interruptibility_state(
+        mut self,
+        interruptibility_state: InterruptibilityState<'rx, 'intx>,
+    ) -> Self {
+        self.interruptibility_state = interruptibility_state;
         self
     }
 }
 
-impl<'rx> Default for StreamOpts<'rx> {
+impl<'rx, 'intx> Default for StreamOpts<'rx, 'intx> {
     fn default() -> Self {
         Self {
             stream_order: StreamOrder::Forward,
             #[cfg(feature = "interruptible")]
-            interruptibility: Interruptibility::NonInterruptible,
+            interruptibility_state: Interruptibility::NonInterruptible.into(),
             marker: PhantomData,
         }
     }
