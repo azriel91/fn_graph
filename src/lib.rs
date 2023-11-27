@@ -20,9 +20,9 @@
 //! fn_graph = "0.8.1"
 //!
 //! # Integrate with `fn_meta` and/or `resman`
-//! fn_graph = { version = "0.8.6", features = ["fn_meta"] }
-//! fn_graph = { version = "0.8.6", features = ["resman"] }
-//! fn_graph = { version = "0.8.6", features = ["fn_meta", "resman"] }
+//! fn_graph = { version = "0.9.0", features = ["fn_meta"] }
+//! fn_graph = { version = "0.9.0", features = ["resman"] }
+//! fn_graph = { version = "0.9.0", features = ["fn_meta", "resman"] }
 //! ```
 //!
 //! # Rationale
