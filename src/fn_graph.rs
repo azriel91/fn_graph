@@ -12,25 +12,40 @@ use fixedbitset::FixedBitSet;
 use crate::{Edge, FnId, FnIdInner, Rank};
 
 #[cfg(feature = "async")]
+use daggy::NodeIndex;
+#[cfg(feature = "async")]
+use futures::future::LocalBoxFuture;
+#[cfg(feature = "async")]
 use futures::{
-    future::{Future, LocalBoxFuture},
-    stream::{self, Stream, StreamExt},
+    future::Future,
+    stream::{self, Stream, StreamExt, TryStreamExt},
     task::Poll,
 };
 #[cfg(feature = "async")]
 use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, error::SendError, Receiver, Sender},
     RwLock,
 };
 
 #[cfg(feature = "async")]
-use crate::{EdgeCounts, FnRef};
+use crate::{
+    EdgeCounts, FnRef, FnWrapper, FnWrapperMut, StreamOpts, StreamOrder, StreamOutcome,
+    StreamOutcomeState, StreamProgress, StreamProgressState,
+};
+#[cfg(all(feature = "async", feature = "interruptible"))]
+use interruptible::{
+    InterruptibilityState, InterruptibleStream, InterruptibleStreamExt, PollOutcome,
+};
 
 /// Directed acyclic graph of functions.
 ///
 /// Besides the `iter_insertion*` function, all iteration functions run using
 /// topological ordering -- where each function is ordered before its
 /// successors.
+///
+/// # Type Parameters
+///
+/// * `F`: Type of the function stored in the graph.
 #[derive(Clone, Debug)]
 pub struct FnGraph<F> {
     /// Graph of functions.
@@ -103,40 +118,75 @@ impl<F> FnGraph<F> {
     /// have returned.
     #[cfg(feature = "async")]
     pub fn stream(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_internal(&self.graph_structure, self.edge_counts.incoming().to_vec())
+        self.stream_internal(StreamOrder::Forward)
     }
 
     /// Returns a stream of function references in reverse topological order.
     ///
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
-    #[cfg(feature = "async")]
-    pub fn stream_rev(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_internal(
-            &self.graph_structure_rev,
-            self.edge_counts.outgoing().to_vec(),
-        )
+    #[cfg(all(feature = "async", not(feature = "interruptible")))]
+    pub fn stream_with<'rx>(
+        &'rx self,
+        opts: StreamOpts<'rx, 'rx>,
+    ) -> impl Stream<Item = FnRef<'rx, F>> + 'rx {
+        let StreamOpts {
+            stream_order,
+            marker: _,
+        } = opts;
+
+        self.stream_internal(stream_order)
+    }
+
+    /// Returns a stream of function references in reverse topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    ///
+    /// # Note
+    ///
+    /// This returns a stream whose item is wrapped in [`PollOutcome`]. For
+    /// interruptible support where `StreamOutcome` is desired, you may wish to
+    /// use [`fold_async_with`][FnGraph::fold_async_with] or
+    /// [`try_fold_async_with`][FnGraph::try_fold_async_with],
+    #[cfg(all(feature = "async", feature = "interruptible"))]
+    pub fn stream_with<'rx>(
+        &'rx self,
+        opts: StreamOpts<'rx, 'rx>,
+    ) -> impl Stream<Item = PollOutcome<FnRef<'rx, F>>> + 'rx {
+        let StreamOpts {
+            stream_order,
+            interruptibility_state,
+            marker: _,
+        } = opts;
+
+        self.stream_internal(stream_order)
+            .interruptible_with(interruptibility_state)
     }
 
     #[cfg(feature = "async")]
-    fn stream_internal<'f>(
-        &'f self,
-        graph_structure: &'f Dag<(), Edge, FnIdInner>,
-        mut predecessor_counts: Vec<usize>,
-    ) -> impl Stream<Item = FnRef<'f, F>> + 'f {
-        // Decrement `predecessor_counts[child_fn_id]` every time a function ref
-        // is dropped, and if `predecessor_counts[child_fn_id]` is 0, the stream
-        // can produce `child_fn`s.
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, mut fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+    fn stream_internal(&self, stream_order: StreamOrder) -> impl Stream<Item = FnRef<'_, F>> + '_ {
+        let FnGraph {
+            ref graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(&graph_structure)
-            .iter(&graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        let StreamSetupInit {
+            graph_structure,
+            mut predecessor_counts,
+            fn_ready_tx,
+            mut fn_ready_rx,
+            fn_done_tx,
+            mut fn_done_rx,
+        } = stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            stream_order,
+        );
 
         let mut fns_remaining = graph_structure.node_count();
         let mut fn_ready_tx = Some(fn_ready_tx);
@@ -176,7 +226,7 @@ impl<F> FnGraph<F> {
             let poll = if let Some(fn_done_tx) = fn_done_tx.as_ref() {
                 fn_ready_rx.poll_recv(context).map(|fn_id| {
                     fn_id.map(|fn_id| {
-                        let r#fn = &self.graph[fn_id];
+                        let r#fn = &graph[fn_id];
                         FnRef {
                             fn_id,
                             r#fn,
@@ -207,11 +257,17 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_async<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    pub async fn fold_async<'f, Seed, FnFold>(
+        &'f self,
+        seed: Seed,
+        fn_fold: FnFold,
+    ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
-        self.fold_async_internal(seed, fn_fold, false).await
+        self.fold_async_internal(seed, StreamOpts::default(), fn_fold)
+            .await
     }
 
     /// Returns a stream of function references in topological order.
@@ -219,65 +275,94 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(feature = "async")]
-    pub async fn fold_rev_async<Seed, FnFold>(&mut self, seed: Seed, fn_fold: FnFold) -> Seed
+    pub async fn fold_async_with<'f, Seed, FnFold>(
+        &'f self,
+        seed: Seed,
+        opts: StreamOpts<'_, '_>,
+        fn_fold: FnFold,
+    ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
-        self.fold_async_internal(seed, fn_fold, true).await
+        self.fold_async_internal(seed, opts, fn_fold).await
     }
 
     #[cfg(feature = "async")]
-    async fn fold_async_internal<Seed, FnFold>(
-        &mut self,
+    async fn fold_async_internal<'f, Seed, FnFold>(
+        &'f self,
         seed: Seed,
+        opts: StreamOpts<'_, '_>,
         fn_fold: FnFold,
-        reverse: bool,
-    ) -> Seed
+    ) -> StreamOutcome<Seed>
     where
-        FnFold: FnMut(Seed, &mut F) -> LocalBoxFuture<'_, Seed>,
+        for<'iter> FnFold: Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
     {
-        let (graph_structure, predecessor_counts) = if reverse {
-            (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            )
-        } else {
-            (&self.graph_structure, self.edge_counts.incoming().to_vec())
-        };
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+        let FnGraph {
+            ref graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(&graph_structure)
-            .iter(&graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        let StreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            marker: _,
+        } = opts;
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let StreamSetupInit {
+            graph_structure,
+            predecessor_counts,
+            fn_ready_tx,
+            mut fn_ready_rx,
+            fn_done_tx,
+            fn_done_rx,
+        } = stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            stream_order,
+        );
+
+        let queuer = fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+        );
 
         let fns_remaining = graph_structure.node_count();
-        let graph = &mut self.graph;
         let mut fn_done_tx = Some(fn_done_tx);
         if fns_remaining == 0 {
             fn_done_tx.take();
         }
+        let fold_stream_state = FoldStreamState {
+            graph,
+            fns_remaining,
+            fn_done_tx,
+            seed,
+            fn_fold,
+        };
         let scheduler = async move {
-            let (_graph, _fns_remaining, _fn_done_tx, seed, _fn_fold) = stream::poll_fn(
-                move |context| fn_ready_rx.poll_recv(context),
-            )
-            .fold(
-                (graph, fns_remaining, fn_done_tx, seed, fn_fold),
-                |(graph, mut fns_remaining, mut fn_done_tx, seed, mut fn_fold), fn_id| async move {
-                    let r#fn = &mut graph[fn_id];
-                    let seed = fn_fold(seed, r#fn).await;
+            let fold_stream_state = stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                    let FoldStreamState {
+                        graph,
+                        mut fns_remaining,
+                        mut fn_done_tx,
+                        seed,
+                        fn_fold,
+                    } = fold_stream_state;
+                    let r#fn = &graph[fn_id];
+                    let seed = fn_fold(seed, FnWrapper::new(r#fn)).await;
                     if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
+                        fn_done_send(fn_done_tx, fn_id).await;
                     }
 
                     // Close `fn_done_rx` when all functions have been executed,
@@ -286,17 +371,175 @@ impl<F> FnGraph<F> {
                         fn_done_tx.take();
                     }
 
-                    (graph, fns_remaining, fn_done_tx, seed, fn_fold)
-                },
-            )
-            .await;
+                    FoldStreamState {
+                        graph,
+                        fns_remaining,
+                        fn_done_tx,
+                        seed,
+                        fn_fold,
+                    }
+                })
+                .await;
+
+            let FoldStreamState {
+                graph: _,
+                fns_remaining: _,
+                fn_done_tx: _,
+                seed,
+                fn_fold: _,
+            } = fold_stream_state;
 
             seed
         };
 
-        let (_, seed) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, seed) = futures::join!(queuer, scheduler);
 
-        seed
+        fn_graph_stream_outcome.map(|()| seed)
+    }
+
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(feature = "async")]
+    pub async fn fold_async_mut<'f, Seed, FnFold>(
+        &'f mut self,
+        seed: Seed,
+        fn_fold: FnFold,
+    ) -> StreamOutcome<Seed>
+    where
+        for<'iter> FnFold: FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
+    {
+        self.fold_async_mut_internal(seed, StreamOpts::default(), fn_fold)
+            .await
+    }
+
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(feature = "async")]
+    pub async fn fold_async_mut_with<'f, Seed, FnFold>(
+        &'f mut self,
+        seed: Seed,
+        opts: StreamOpts<'_, '_>,
+        fn_fold: FnFold,
+    ) -> StreamOutcome<Seed>
+    where
+        for<'iter> FnFold: FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
+    {
+        self.fold_async_mut_internal(seed, opts, fn_fold).await
+    }
+
+    #[cfg(feature = "async")]
+    async fn fold_async_mut_internal<'f, Seed, FnFold>(
+        &'f mut self,
+        seed: Seed,
+        opts: StreamOpts<'_, '_>,
+        fn_fold: FnFold,
+    ) -> StreamOutcome<Seed>
+    where
+        for<'iter> FnFold: FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
+        F: 'f,
+    {
+        let FnGraph {
+            ref mut graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
+
+        let StreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            marker: _,
+        } = opts;
+
+        let StreamSetupInit {
+            graph_structure,
+            predecessor_counts,
+            fn_ready_tx,
+            mut fn_ready_rx,
+            fn_done_tx,
+            fn_done_rx,
+        } = stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            stream_order,
+        );
+
+        let queuer = fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+        );
+
+        let fns_remaining = graph_structure.node_count();
+        let mut fn_done_tx = Some(fn_done_tx);
+        if fns_remaining == 0 {
+            fn_done_tx.take();
+        }
+        let fold_stream_state = FoldStreamStateMut {
+            graph,
+            fns_remaining,
+            fn_done_tx,
+            seed,
+            fn_fold,
+        };
+        let scheduler = async move {
+            let fold_stream_state = stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                    let FoldStreamStateMut {
+                        graph,
+                        mut fns_remaining,
+                        mut fn_done_tx,
+                        seed,
+                        mut fn_fold,
+                    } = fold_stream_state;
+                    let r#fn = &mut graph[fn_id];
+                    let seed = fn_fold(seed, FnWrapperMut::new(r#fn)).await;
+                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                        fn_done_send(fn_done_tx, fn_id).await;
+                    }
+
+                    // Close `fn_done_rx` when all functions have been executed,
+                    fns_remaining -= 1;
+                    if fns_remaining == 0 {
+                        fn_done_tx.take();
+                    }
+
+                    FoldStreamStateMut {
+                        graph,
+                        fns_remaining,
+                        fn_done_tx,
+                        seed,
+                        fn_fold,
+                    }
+                })
+                .await;
+
+            let FoldStreamStateMut {
+                graph: _,
+                fns_remaining: _,
+                fn_done_tx: _,
+                seed,
+                fn_fold: _,
+            } = fold_stream_state;
+
+            seed
+        };
+
+        let (fn_graph_stream_outcome, seed) = futures::join!(queuer, scheduler);
+
+        fn_graph_stream_outcome.map(|()| seed)
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -315,17 +558,18 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> StreamOutcome<()>
+    where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Forward)
+        self.for_each_concurrent_internal(limit, StreamOpts::default(), fn_for_each)
             .await
     }
 
-    /// Runs the provided logic over the functions concurrently in reverse
-    /// topological order.
+    /// Runs the provided logic over the functions concurrently with the given
+    /// stream options.
     ///
     /// The first argument is an optional `limit` on the number of concurrent
     /// futures. If this limit is not `None`, no more than `limit` futures will
@@ -336,16 +580,18 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent_rev<'f, FnForEach, Fut>(
+    pub async fn for_each_concurrent_with<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> StreamOutcome<()>
+    where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        self.for_each_concurrent_internal(limit, fn_for_each, IterDirection::Reverse)
+        self.for_each_concurrent_internal(limit, opts, fn_for_each)
             .await
     }
 
@@ -354,41 +600,34 @@ impl<F> FnGraph<F> {
     async fn for_each_concurrent_internal<'f, FnForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
-        iter_direction: IterDirection,
-    ) where
+    ) -> StreamOutcome<()>
+    where
         FnForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = ()> + 'f,
         F: 'f,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            ),
-        };
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+        let FnGraph {
+            ref graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(graph_structure)
-            .iter(graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        let StreamSetupInitConcurrent {
+            graph_structure,
+            mut fn_ready_rx,
+            queuer,
+            fn_done_tx,
+            fns_remaining,
+        } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
-
-        let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
-        let fns_remaining = graph_structure.node_count();
-        let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
-        let fn_refs = &self.graph;
+        let fn_refs = graph;
 
         if graph_structure.node_count() == 0 {
             fn_done_tx.write().await.take();
@@ -398,27 +637,14 @@ impl<F> FnGraph<F> {
                 .for_each_concurrent(limit, |fn_id| async move {
                     let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
                     fn_for_each(r#fn).await;
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        fn_graph_stream_outcome
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -437,11 +663,12 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> StreamOutcome<()>
+    where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(limit, fn_for_each, IterDirection::Forward)
+        self.for_each_concurrent_mut_internal(limit, StreamOpts::default(), fn_for_each)
             .await
     }
 
@@ -457,58 +684,52 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn for_each_concurrent_mut_rev<FnForEach, Fut>(
+    pub async fn for_each_concurrent_mut_with<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
-    ) where
+    ) -> StreamOutcome<()>
+    where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        self.for_each_concurrent_mut_internal(limit, fn_for_each, IterDirection::Reverse)
+        self.for_each_concurrent_mut_internal(limit, opts, fn_for_each)
             .await
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn for_each_concurrent_mut_internal<FnForEach, Fut>(
+    async fn for_each_concurrent_mut_internal<'f, FnForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_for_each: FnForEach,
-        iter_direction: IterDirection,
-    ) where
+    ) -> StreamOutcome<()>
+    where
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            ),
-        };
-        let channel_capacity = std::cmp::max(1, graph_structure.node_count());
-        let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+        let FnGraph {
+            ref mut graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(graph_structure)
-            .iter(graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        let StreamSetupInitConcurrent {
+            graph_structure,
+            mut fn_ready_rx,
+            queuer,
+            fn_done_tx,
+            fns_remaining,
+        } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
-
-        let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
-        let fns_remaining = graph_structure.node_count();
-        let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
-        let fn_mut_refs = self
-            .graph
+        let fn_mut_refs = graph
             .node_weights_mut()
             .map(RwLock::new)
             .collect::<Vec<_>>();
@@ -524,77 +745,341 @@ impl<F> FnGraph<F> {
                         .try_write()
                         .expect("Expected to borrow fn mutably.");
                     fn_for_each(&mut r#fn).await;
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        fn_graph_stream_outcome
     }
 
-    /// Sends IDs of function whose predecessors have been executed to
-    /// `fn_ready_tx`.
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
     #[cfg(feature = "async")]
-    async fn fn_ready_queuer(
-        graph_structure: &Dag<(), Edge, FnIdInner>,
-        predecessor_counts: Vec<usize>,
-        mut fn_done_rx: Receiver<FnId>,
-        fn_ready_tx: Sender<FnId>,
-    ) {
+    pub async fn try_fold_async<'f, E, Seed, FnTryFold>(
+        &'f self,
+        seed: Seed,
+        fn_try_fold: FnTryFold,
+    ) -> Result<StreamOutcome<Seed>, E>
+    where
+        for<'iter> FnTryFold:
+            Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
+    {
+        self.try_fold_async_internal(seed, StreamOpts::default(), fn_try_fold)
+            .await
+    }
+
+    /// Attempt to execute an accumulating asynchronous computation over a
+    /// stream, collecting all the values into one final result.
+    ///
+    /// This combinator will accumulate all values returned by this stream
+    /// according to the closure provided. The initial state is also provided to
+    /// this method and then is returned again by each execution of the closure.
+    /// Once the entire stream has been exhausted the returned future will
+    /// resolve to this value.
+    ///
+    /// This method is similar to fold, but will exit early when any of the
+    /// following are true:
+    ///
+    /// * if an error is encountered in the stream.
+    /// * if an error is encountered in the provided closure.
+    /// * if an interrupt signal is received.
+    #[cfg(feature = "async")]
+    pub async fn try_fold_async_with<'f, E, Seed, FnTryFold>(
+        &'f self,
+        seed: Seed,
+        opts: StreamOpts<'_, '_>,
+        fn_try_fold: FnTryFold,
+    ) -> Result<StreamOutcome<Seed>, E>
+    where
+        for<'iter> FnTryFold:
+            Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
+    {
+        self.try_fold_async_internal(seed, opts, fn_try_fold).await
+    }
+
+    #[cfg(feature = "async")]
+    async fn try_fold_async_internal<'f, E, Seed, FnTryFold>(
+        &'f self,
+        seed: Seed,
+        opts: StreamOpts<'_, '_>,
+        fn_try_fold: FnTryFold,
+    ) -> Result<StreamOutcome<Seed>, E>
+    where
+        for<'iter> FnTryFold:
+            Fn(Seed, FnWrapper<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
+    {
+        let FnGraph {
+            ref graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
+
+        let StreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            marker: _,
+        } = opts;
+
+        let StreamSetupInit {
+            graph_structure,
+            predecessor_counts,
+            fn_ready_tx,
+            mut fn_ready_rx,
+            fn_done_tx,
+            fn_done_rx,
+        } = stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            stream_order,
+        );
+
+        let queuer = fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+        );
+
         let fns_remaining = graph_structure.node_count();
-        let mut fn_ready_tx = Some(fn_ready_tx);
+        let mut fn_done_tx = Some(fn_done_tx);
         if fns_remaining == 0 {
-            fn_ready_tx.take();
+            fn_done_tx.take();
         }
-        stream::poll_fn(move |context| fn_done_rx.poll_recv(context))
-            .fold(
-                (fns_remaining, predecessor_counts, fn_ready_tx),
-                move |(mut fns_remaining, mut predecessor_counts, mut fn_ready_tx), fn_id| async move {
-                    // Close `fn_ready_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_ready_tx.take();
+        let fold_stream_state = FoldStreamState {
+            graph,
+            fns_remaining,
+            fn_done_tx,
+            seed,
+            fn_fold: fn_try_fold,
+        };
+        let scheduler = async move {
+            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .map(Result::<_, E>::Ok)
+                .try_fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                    let FoldStreamState {
+                        graph,
+                        mut fns_remaining,
+                        mut fn_done_tx,
+                        seed,
+                        fn_fold: fn_try_fold,
+                    } = fold_stream_state;
+                    let r#fn = &graph[fn_id];
+                    let seed = fn_try_fold(seed, FnWrapper::new(r#fn)).await?;
+                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                        fn_done_send(fn_done_tx, fn_id).await;
                     }
 
-                    graph_structure
-                        .children(fn_id)
-                        .iter(graph_structure)
-                        .for_each(|(_edge_id, child_fn_id)| {
-                            predecessor_counts[child_fn_id.index()] -= 1;
-                            if predecessor_counts[child_fn_id.index()] == 0 {
-                                if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
-                                    fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
-                                        #[cfg_attr(coverage_nightly, coverage(off))]
-                                        |e| {
-                                        panic!(
-                                            "Failed to queue function `{}`. Cause: {}",
-                                            fn_id.index(),
-                                            e
-                                        )
-                                    });
-                                }
-                            }
-                        });
+                    // Close `fn_done_rx` when all functions have been executed,
+                    fns_remaining -= 1;
+                    if fns_remaining == 0 {
+                        fn_done_tx.take();
+                    }
 
-                    (fns_remaining, predecessor_counts, fn_ready_tx)
-                },
-            )
-            .await;
+                    let fold_stream_state = FoldStreamState {
+                        graph,
+                        fns_remaining,
+                        fn_done_tx,
+                        seed,
+                        fn_fold: fn_try_fold,
+                    };
+
+                    Ok(fold_stream_state)
+                })
+                .await
+                .map(|fold_stream_state| {
+                    let FoldStreamState {
+                        graph: _,
+                        fns_remaining: _,
+                        fn_done_tx: _,
+                        seed,
+                        fn_fold: _,
+                    } = fold_stream_state;
+
+                    seed
+                })
+        };
+
+        let (fn_graph_stream_outcome, seed_result) = futures::join!(queuer, scheduler);
+
+        seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
+    }
+
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(feature = "async")]
+    pub async fn try_fold_async_mut<'f, E, Seed, FnTryFold>(
+        &'f mut self,
+        seed: Seed,
+        fn_try_fold: FnTryFold,
+    ) -> Result<StreamOutcome<Seed>, E>
+    where
+        for<'iter> FnTryFold:
+            FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
+    {
+        self.try_fold_async_mut_internal(seed, StreamOpts::default(), fn_try_fold)
+            .await
+    }
+
+    /// Attempt to execute an accumulating asynchronous computation over a
+    /// stream, collecting all the values into one final result.
+    ///
+    /// This combinator will accumulate all values returned by this stream
+    /// according to the closure provided. The initial state is also provided to
+    /// this method and then is returned again by each execution of the closure.
+    /// Once the entire stream has been exhausted the returned future will
+    /// resolve to this value.
+    ///
+    /// This method is similar to fold, but will exit early when any of the
+    /// following are true:
+    ///
+    /// * if an error is encountered in the stream.
+    /// * if an error is encountered in the provided closure.
+    /// * if an interrupt signal is received.
+    #[cfg(feature = "async")]
+    pub async fn try_fold_async_mut_with<'f, E, Seed, FnTryFold>(
+        &'f mut self,
+        seed: Seed,
+        opts: StreamOpts<'_, '_>,
+        fn_try_fold: FnTryFold,
+    ) -> Result<StreamOutcome<Seed>, E>
+    where
+        for<'iter> FnTryFold:
+            FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
+    {
+        self.try_fold_async_mut_internal(seed, opts, fn_try_fold)
+            .await
+    }
+
+    #[cfg(feature = "async")]
+    async fn try_fold_async_mut_internal<'f, E, Seed, FnTryFold>(
+        &'f mut self,
+        seed: Seed,
+        opts: StreamOpts<'_, '_>,
+        fn_try_fold: FnTryFold,
+    ) -> Result<StreamOutcome<Seed>, E>
+    where
+        for<'iter> FnTryFold:
+            FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
+        F: 'f,
+    {
+        let FnGraph {
+            ref mut graph,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
+
+        let StreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            marker: _,
+        } = opts;
+
+        let StreamSetupInit {
+            graph_structure,
+            predecessor_counts,
+            fn_ready_tx,
+            mut fn_ready_rx,
+            fn_done_tx,
+            fn_done_rx,
+        } = stream_setup_init(
+            graph_structure,
+            graph_structure_rev,
+            edge_counts,
+            stream_order,
+        );
+
+        let queuer = fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+        );
+
+        let fns_remaining = graph_structure.node_count();
+        let mut fn_done_tx = Some(fn_done_tx);
+        if fns_remaining == 0 {
+            fn_done_tx.take();
+        }
+        let fold_stream_state = FoldStreamStateMut {
+            graph,
+            fns_remaining,
+            fn_done_tx,
+            seed,
+            fn_fold: fn_try_fold,
+        };
+        let scheduler = async move {
+            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+                .map(Result::<_, E>::Ok)
+                .try_fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                    let FoldStreamStateMut {
+                        graph,
+                        mut fns_remaining,
+                        mut fn_done_tx,
+                        seed,
+                        fn_fold: mut fn_try_fold,
+                    } = fold_stream_state;
+                    let r#fn = &mut graph[fn_id];
+                    let seed = fn_try_fold(seed, FnWrapperMut::new(r#fn)).await?;
+                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                        fn_done_send(fn_done_tx, fn_id).await;
+                    }
+
+                    // Close `fn_done_rx` when all functions have been executed,
+                    fns_remaining -= 1;
+                    if fns_remaining == 0 {
+                        fn_done_tx.take();
+                    }
+
+                    let fold_stream_state = FoldStreamStateMut {
+                        graph,
+                        fns_remaining,
+                        fn_done_tx,
+                        seed,
+                        fn_fold: fn_try_fold,
+                    };
+
+                    Ok(fold_stream_state)
+                })
+                .await
+                .map(|fold_stream_state| {
+                    let FoldStreamStateMut {
+                        graph: _,
+                        fns_remaining: _,
+                        fn_done_tx: _,
+                        seed,
+                        fn_fold: _,
+                    } = fold_stream_state;
+
+                    seed
+                })
+        };
+
+        let (fn_graph_stream_outcome, seed_result) = futures::join!(queuer, scheduler);
+
+        seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -617,18 +1102,18 @@ impl<F> FnGraph<F> {
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Forward)
+        self.try_for_each_concurrent_internal(limit, StreamOpts::default(), fn_try_for_each)
             .await
     }
 
-    /// Runs the provided logic over the functions concurrently in reverse
-    /// topological order, stopping when an error is encountered.
+    /// Runs the provided logic over the functions concurrently with the given
+    /// options, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned. The return
     /// error type is a `Vec<E>` as it is possible for multiple tasks to return
@@ -643,17 +1128,18 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_rev<'f, E, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        self.try_for_each_concurrent_internal(limit, fn_try_for_each, IterDirection::Reverse)
+        self.try_for_each_concurrent_internal(limit, opts, fn_try_for_each)
             .await
     }
 
@@ -671,38 +1157,40 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control<'f, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
+        E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>> + 'f,
+        Fut: Future<Output = ControlFlow<E, ()>> + 'f,
     {
         let result = self
-            .try_for_each_concurrent_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
-                        }
+            .try_for_each_concurrent_internal(limit, StreamOpts::default(), |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
-                },
-                IterDirection::Forward,
-            )
+                }
+            })
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
-    /// Runs the provided logic over the functions concurrently in reverse
-    /// topological order, stopping when an error is encountered.
+    /// Runs the provided logic over the functions concurrently with the given
+    /// options, stopping when an error is encountered.
     ///
     /// This gracefully waits until all produced tasks have returned.
     ///
@@ -715,33 +1203,36 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_rev<'f, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_with<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
+        E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>> + 'f,
+        Fut: Future<Output = ControlFlow<E, ()>> + 'f,
     {
         let result = self
-            .try_for_each_concurrent_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
-                        }
+            .try_for_each_concurrent_internal(limit, opts, |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
-                },
-                IterDirection::Reverse,
-            )
+                }
+            })
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
@@ -750,17 +1241,24 @@ impl<F> FnGraph<F> {
     async fn try_for_each_concurrent_internal<'f, E, FnTryForEach, Fut>(
         &'f self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
-        iter_direction: IterDirection,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
+        let StreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            marker: _,
+        } = opts;
+
+        let (graph_structure, predecessor_counts) = match stream_order {
+            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            StreamOrder::Reverse => (
                 &self.graph_structure_rev,
                 self.edge_counts.outgoing().to_vec(),
             ),
@@ -777,8 +1275,14 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let queuer = fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+        );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
@@ -808,38 +1312,24 @@ impl<F> FnGraph<F> {
                         fn_done_tx.write().await.take();
                     };
 
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
 
             drop(result_tx);
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
             .await;
 
         if results.is_empty() {
-            Ok(())
+            Ok(fn_graph_stream_outcome)
         } else {
-            Err(results)
+            Err((fn_graph_stream_outcome, results))
         }
     }
 
@@ -863,13 +1353,13 @@ impl<F> FnGraph<F> {
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, IterDirection::Forward)
+        self.try_for_each_concurrent_mut_internal(limit, StreamOpts::default(), fn_try_for_each)
             .await
     }
 
@@ -889,17 +1379,18 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_mut_rev<E, FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        self.try_for_each_concurrent_mut_internal(limit, fn_try_for_each, IterDirection::Reverse)
+        self.try_for_each_concurrent_mut_internal(limit, opts, fn_try_for_each)
             .await
     }
 
@@ -917,33 +1408,35 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_mut<FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_mut<E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
+        E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>>,
+        Fut: Future<Output = ControlFlow<E, ()>>,
     {
         let result = self
-            .try_for_each_concurrent_mut_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
-                        }
+            .try_for_each_concurrent_mut_internal(limit, StreamOpts::default(), |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
-                },
-                IterDirection::Forward,
-            )
+                }
+            })
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
@@ -961,52 +1454,62 @@ impl<F> FnGraph<F> {
     /// **Note:** a limit of zero is interpreted as no limit at all, and will
     /// have the same result as passing in `None`.
     #[cfg(feature = "async")]
-    pub async fn try_for_each_concurrent_control_mut_rev<FnTryForEach, Fut>(
+    pub async fn try_for_each_concurrent_control_mut_with<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
-    ) -> ControlFlow<(), ()>
+    ) -> ControlFlow<(StreamOutcome<()>, Vec<E>), StreamOutcome<()>>
     where
+        E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
-        Fut: Future<Output = ControlFlow<(), ()>>,
+        Fut: Future<Output = ControlFlow<E, ()>>,
     {
         let result = self
-            .try_for_each_concurrent_mut_internal(
-                limit,
-                |f| {
-                    let fut = fn_try_for_each(f);
-                    async move {
-                        match fut.await {
-                            ControlFlow::Continue(()) => Result::Ok(()),
-                            ControlFlow::Break(()) => Result::Err(()),
-                        }
+            .try_for_each_concurrent_mut_internal(limit, opts, |f| {
+                let fut = fn_try_for_each(f);
+                async move {
+                    match fut.await {
+                        ControlFlow::Continue(()) => Result::Ok(()),
+                        ControlFlow::Break(e) => Result::Err(e),
                     }
-                },
-                IterDirection::Reverse,
-            )
+                }
+            })
             .await;
         match result {
-            Result::Ok(()) => ControlFlow::Continue(()),
-            Result::Err(_) => ControlFlow::Break(()),
+            Result::Ok(outcome) => match outcome.state {
+                StreamOutcomeState::NotStarted | StreamOutcomeState::Interrupted => {
+                    ControlFlow::Break((outcome, Vec::new()))
+                }
+                StreamOutcomeState::Finished => ControlFlow::Continue(outcome),
+            },
+            Result::Err(outcome_and_err) => ControlFlow::Break(outcome_and_err),
         }
     }
 
     // https://users.rust-lang.org/t/lifetime-may-not-live-long-enough-for-an-async-closure/62489
     #[cfg(feature = "async")]
-    async fn try_for_each_concurrent_mut_internal<E, FnTryForEach, Fut>(
+    async fn try_for_each_concurrent_mut_internal<'f, E, FnTryForEach, Fut>(
         &mut self,
         limit: impl Into<Option<usize>>,
+        opts: StreamOpts<'f, 'f>,
         fn_try_for_each: FnTryForEach,
-        iter_direction: IterDirection,
-    ) -> Result<(), Vec<E>>
+    ) -> Result<StreamOutcome<()>, (StreamOutcome<()>, Vec<E>)>
     where
         E: Debug,
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        let (graph_structure, predecessor_counts) = match iter_direction {
-            IterDirection::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            IterDirection::Reverse => (
+        let StreamOpts {
+            stream_order,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            marker: _,
+        } = opts;
+
+        let (graph_structure, predecessor_counts) = match stream_order {
+            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
+            StreamOrder::Reverse => (
                 &self.graph_structure_rev,
                 self.edge_counts.outgoing().to_vec(),
             ),
@@ -1023,8 +1526,14 @@ impl<F> FnGraph<F> {
             .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
             .expect("Failed to preload function with no predecessors.");
 
-        let queuer =
-            Self::fn_ready_queuer(graph_structure, predecessor_counts, fn_done_rx, fn_ready_tx);
+        let queuer = fn_ready_queuer(
+            graph_structure,
+            predecessor_counts,
+            fn_done_rx,
+            fn_ready_tx,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+        );
 
         let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
@@ -1057,38 +1566,24 @@ impl<F> FnGraph<F> {
                         fn_done_tx.write().await.take();
                     };
 
-                    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
-                        fn_done_tx
-                            .send(fn_id)
-                            .await
-                            .expect("Scheduler failed to send fn_id in `fn_done_tx`.");
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    let fns_remaining_val = {
-                        let mut fns_remaining_ref = fns_remaining.write().await;
-                        *fns_remaining_ref -= 1;
-                        *fns_remaining_ref
-                    };
-                    if fns_remaining_val == 0 {
-                        fn_done_tx.write().await.take();
-                    }
+                    fn_done_send_locked(fn_done_tx, fn_id).await;
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                 })
                 .await;
 
             drop(result_tx);
         };
 
-        futures::join!(queuer, scheduler);
+        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
             .await;
 
         if results.is_empty() {
-            Ok(())
+            Ok(fn_graph_stream_outcome)
         } else {
-            Err(results)
+            Err((fn_graph_stream_outcome, results))
         }
     }
 
@@ -1192,6 +1687,436 @@ impl<F> FnGraph<F> {
     }
 }
 
+/// Sends the ID of a processed function to the queuer.
+///
+/// Used by the scheduler.
+#[cfg(feature = "async")]
+async fn fn_done_send_locked(
+    fn_done_tx: &RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
+    fn_id: NodeIndex<FnIdInner>,
+) {
+    if let Some(fn_done_tx) = fn_done_tx.read().await.as_ref() {
+        fn_done_send(fn_done_tx, fn_id).await;
+    }
+}
+
+/// Sends the ID of a processed function to the queuer.
+///
+/// Used by the scheduler.
+#[cfg(feature = "async")]
+async fn fn_done_send(fn_done_tx: &Sender<NodeIndex<FnIdInner>>, fn_id: NodeIndex<FnIdInner>) {
+    let fn_done_send_result = fn_done_tx.send(fn_id).await;
+
+    match fn_done_send_result {
+        Ok(()) => {}
+        Err(SendError(_fn_id)) => {
+            // Ignore -- queuer is likely interrupted and is no longer
+            // listening.
+        }
+    }
+}
+
+/// Decrements `fns_remaining` and Closes `fn_done_rx` when all functions have
+/// been executed.
+#[cfg(feature = "async")]
+async fn fns_remaining_decrement(
+    fns_remaining: &RwLock<usize>,
+    fn_done_tx: &RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
+) {
+    let fns_remaining_val = {
+        let mut fns_remaining_ref = fns_remaining.write().await;
+        *fns_remaining_ref -= 1;
+        *fns_remaining_ref
+    };
+    if fns_remaining_val == 0 {
+        fn_done_tx.write().await.take();
+    }
+}
+
+#[cfg(feature = "async")]
+fn stream_setup_init<'f>(
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
+    edge_counts: &EdgeCounts,
+    stream_order: StreamOrder,
+) -> StreamSetupInit<'f> {
+    let (graph_structure, predecessor_counts) = match stream_order {
+        StreamOrder::Forward => (graph_structure, edge_counts.incoming().to_vec()),
+        StreamOrder::Reverse => (graph_structure_rev, edge_counts.outgoing().to_vec()),
+    };
+    // Decrement `predecessor_counts[child_fn_id]` every time a function ref
+    // is dropped, and if `predecessor_counts[child_fn_id]` is 0, the stream
+    // can produce `child_fn`s.
+    let channel_capacity = std::cmp::max(1, graph_structure.node_count());
+    let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
+    let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
+
+    // Preload the channel with all of the functions that have no predecessors
+    Topo::new(&graph_structure)
+        .iter(&graph_structure)
+        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+        .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+        .expect("Failed to preload function with no predecessors.");
+
+    StreamSetupInit {
+        graph_structure,
+        predecessor_counts,
+        fn_ready_tx,
+        fn_ready_rx,
+        fn_done_tx,
+        fn_done_rx,
+    }
+}
+
+#[cfg(feature = "async")]
+fn stream_setup_init_concurrent<'f>(
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
+    edge_counts: &EdgeCounts,
+    opts: StreamOpts<'f, 'f>,
+) -> StreamSetupInitConcurrent<'f, impl Future<Output = StreamOutcome<()>> + 'f> {
+    let StreamOpts {
+        stream_order,
+        #[cfg(feature = "interruptible")]
+        interruptibility_state,
+        marker: _,
+    } = opts;
+
+    let StreamSetupInit {
+        graph_structure,
+        predecessor_counts,
+        fn_ready_tx,
+        fn_ready_rx,
+        fn_done_tx,
+        fn_done_rx,
+    } = stream_setup_init(
+        graph_structure,
+        graph_structure_rev,
+        edge_counts,
+        stream_order,
+    );
+
+    let queuer = fn_ready_queuer(
+        graph_structure,
+        predecessor_counts,
+        fn_done_rx,
+        fn_ready_tx,
+        #[cfg(feature = "interruptible")]
+        interruptibility_state,
+    );
+
+    let fn_done_tx = RwLock::new(Some(fn_done_tx));
+    let fns_remaining = graph_structure.node_count();
+    let fns_remaining = RwLock::new(fns_remaining);
+    StreamSetupInitConcurrent {
+        graph_structure,
+        fn_ready_rx,
+        queuer,
+        fn_done_tx,
+        fns_remaining,
+    }
+}
+
+/// Sends IDs of function whose predecessors have been executed to
+/// `fn_ready_tx`.
+#[cfg(feature = "async")]
+async fn fn_ready_queuer<'f>(
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    predecessor_counts: Vec<usize>,
+    mut fn_done_rx: Receiver<FnId>,
+    fn_ready_tx: Sender<FnId>,
+    #[cfg(feature = "interruptible")] interruptibility_state: InterruptibilityState<'f, '_>,
+) -> StreamOutcome<()> {
+    let fns_remaining = graph_structure.node_count();
+    let mut fn_graph_stream_progress = StreamProgress::with_capacity((), fns_remaining);
+
+    let mut fn_ready_tx = Some(fn_ready_tx);
+    if fns_remaining == 0 {
+        fn_graph_stream_progress.state = StreamProgressState::Finished;
+        fn_ready_tx.take();
+    }
+    let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
+
+    #[cfg(not(feature = "interruptible"))]
+    {
+        let queuer_stream_state =
+            QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
+        queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
+    }
+
+    #[cfg(feature = "interruptible")]
+    {
+        let queuer_stream_state_interruptible = QueuerStreamStateInterruptible {
+            fns_remaining,
+            predecessor_counts,
+            fn_ready_tx,
+            fn_graph_stream_progress,
+        };
+        queuer_stream_fold_interruptible(
+            stream.interruptible_with(interruptibility_state),
+            queuer_stream_state_interruptible,
+            graph_structure,
+        )
+        .await
+    }
+}
+
+/// Polls the queuer stream until completed.
+#[cfg(all(feature = "async", not(feature = "interruptible")))]
+async fn queuer_stream_fold(
+    stream: stream::PollFn<
+        impl FnMut(&mut std::task::Context) -> Poll<Option<NodeIndex<FnIdInner>>>,
+    >,
+    queuer_stream_state: QueuerStreamState,
+    graph_structure: &Dag<(), Edge, FnIdInner>,
+) -> StreamOutcome<()> {
+    let queuer_stream_state = stream
+        .fold(
+            queuer_stream_state,
+            move |queuer_stream_state, fn_id| async move {
+                let QueuerStreamState {
+                    mut fns_remaining,
+                    mut predecessor_counts,
+                    mut fn_ready_tx,
+                    mut fn_ids_processed,
+                } = queuer_stream_state;
+
+                // Close `fn_ready_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    fn_ready_tx.take();
+                }
+
+                // Mark `fn_id` as processed.
+                fn_ids_processed.push(fn_id);
+
+                graph_structure
+                    .children(fn_id)
+                    .iter(graph_structure)
+                    .for_each(|(_edge_id, child_fn_id)| {
+                        predecessor_counts[child_fn_id.index()] -= 1;
+                        if predecessor_counts[child_fn_id.index()] == 0 {
+                            if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
+                                fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
+                                    #[cfg_attr(coverage_nightly, coverage(off))]
+                                    |e| {
+                                        panic!(
+                                            "Failed to queue function `{}`. Cause: {}",
+                                            fn_id.index(),
+                                            e
+                                        )
+                                    },
+                                );
+                            }
+                        }
+                    });
+
+                QueuerStreamState {
+                    fns_remaining,
+                    predecessor_counts,
+                    fn_ready_tx,
+                    fn_ids_processed,
+                }
+            },
+        )
+        .await;
+
+    let QueuerStreamState {
+        fn_ids_processed, ..
+    } = queuer_stream_state;
+
+    StreamOutcome::finished_with((), fn_ids_processed)
+}
+
+/// Polls the queuer stream until completed or interrupted.
+#[cfg(all(feature = "async", feature = "interruptible"))]
+async fn queuer_stream_fold_interruptible<'rx, 'intx, S>(
+    stream: InterruptibleStream<'rx, 'intx, S>,
+    queuer_stream_state_interruptible: QueuerStreamStateInterruptible,
+    graph_structure: &Dag<(), Edge, FnIdInner>,
+) -> StreamOutcome<()>
+where
+    S: Stream<Item = NodeIndex<FnIdInner>>,
+    InterruptibleStream<'rx, 'intx, S>: Stream<Item = PollOutcome<FnId>>,
+{
+    let queuer_stream_state_interruptible = stream
+        .fold(
+            queuer_stream_state_interruptible,
+            move |queuer_stream_state_interruptible, poll_outcome| async move {
+                let QueuerStreamStateInterruptible {
+                    mut fns_remaining,
+                    mut predecessor_counts,
+                    mut fn_ready_tx,
+                    mut fn_graph_stream_progress,
+                } = queuer_stream_state_interruptible;
+
+                let StreamProgress {
+                    value: (),
+                    state,
+                    ref mut fn_ids_processed,
+                    ref mut fn_ids_not_processed,
+                } = &mut fn_graph_stream_progress;
+
+                let (fn_id, interrupted) = match poll_outcome {
+                    PollOutcome::Interrupted(fn_id_opt) => (fn_id_opt, true),
+                    PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                };
+
+                // Close `fn_ready_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    *state = StreamProgressState::Finished;
+                    fn_ready_tx.take();
+                } else {
+                    *state = StreamProgressState::InProgress;
+                }
+
+                if interrupted {
+                    fn_ready_tx.take();
+                }
+
+                if let Some(fn_id) = fn_id {
+                    // Mark `fn_id` as processed.
+                    fn_ids_processed.push(fn_id);
+                    if let Some(fn_id_pos) = fn_ids_not_processed
+                        .iter()
+                        .position(|fn_id_iter| fn_id == *fn_id_iter)
+                    {
+                        fn_ids_not_processed.remove(fn_id_pos);
+                    }
+
+                    if !interrupted {
+                        graph_structure
+                            .children(fn_id)
+                            .iter(graph_structure)
+                            .for_each(|(_edge_id, child_fn_id)| {
+                                predecessor_counts[child_fn_id.index()] -= 1;
+                                if predecessor_counts[child_fn_id.index()] == 0 {
+                                    if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
+                                        fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
+                                            #[cfg_attr(coverage_nightly, coverage(off))]
+                                            |e| {
+                                                panic!(
+                                                    "Failed to queue function `{}`. Cause: {}",
+                                                    fn_id.index(),
+                                                    e
+                                                )
+                                            },
+                                        );
+                                    }
+                                }
+                            });
+                    }
+                } else {
+                    // We were interrupted. The clearing of `fn_ready_tx` means
+                    // this function should no longer be polled.
+                }
+
+                QueuerStreamStateInterruptible {
+                    fns_remaining,
+                    predecessor_counts,
+                    fn_ready_tx,
+                    fn_graph_stream_progress,
+                }
+            },
+        )
+        .await;
+
+    let QueuerStreamStateInterruptible {
+        fn_graph_stream_progress,
+        ..
+    } = queuer_stream_state_interruptible;
+
+    StreamOutcome::from(fn_graph_stream_progress)
+}
+
+#[cfg(feature = "async")]
+struct StreamSetupInit<'f> {
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    predecessor_counts: Vec<usize>,
+    fn_ready_tx: Sender<NodeIndex<FnIdInner>>,
+    fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
+    fn_done_tx: Sender<NodeIndex<FnIdInner>>,
+    fn_done_rx: Receiver<NodeIndex<FnIdInner>>,
+}
+
+#[cfg(feature = "async")]
+struct StreamSetupInitConcurrent<'f, QueuerFut> {
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
+    queuer: QueuerFut,
+    fn_done_tx: RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
+    fns_remaining: RwLock<usize>,
+}
+
+#[cfg(feature = "async")]
+struct FoldStreamState<'f, F, Seed, FnFold> {
+    /// Graph of functions.
+    graph: &'f Dag<F, Edge, FnIdInner>,
+    /// Number of functions in the graph remaining to execute.
+    fns_remaining: usize,
+    /// Channel sender for function IDs that have been run.
+    fn_done_tx: Option<Sender<NodeIndex<FnIdInner>>>,
+    /// Cumulative value after each fold.
+    seed: Seed,
+    /// Function to run each iteration.
+    fn_fold: FnFold,
+}
+
+#[cfg(feature = "async")]
+struct FoldStreamStateMut<'f, F, Seed, FnFold> {
+    /// Graph of functions.
+    graph: &'f mut Dag<F, Edge, FnIdInner>,
+    /// Number of functions in the graph remaining to execute.
+    fns_remaining: usize,
+    /// Channel sender for function IDs that have been run.
+    fn_done_tx: Option<Sender<NodeIndex<FnIdInner>>>,
+    /// Cumulative value after each fold.
+    seed: Seed,
+    /// Function to run each iteration.
+    fn_fold: FnFold,
+}
+
+#[cfg(all(feature = "async", not(feature = "interruptible")))]
+struct QueuerStreamState {
+    /// Number of functions in the graph remaining to execute.
+    fns_remaining: usize,
+    /// Number of predecessors each function in the graph is waiting on.
+    predecessor_counts: Vec<usize>,
+    /// Channel sender for function IDs that are ready to run.
+    fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
+    /// IDs of the items that are processed.
+    fn_ids_processed: Vec<FnId>,
+}
+
+#[cfg(all(feature = "async", not(feature = "interruptible")))]
+impl QueuerStreamState {
+    fn new(
+        fns_remaining: usize,
+        predecessor_counts: Vec<usize>,
+        fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
+    ) -> Self {
+        Self {
+            fns_remaining,
+            predecessor_counts,
+            fn_ready_tx,
+            fn_ids_processed: Vec::with_capacity(fns_remaining),
+        }
+    }
+}
+
+#[cfg(all(feature = "async", feature = "interruptible"))]
+struct QueuerStreamStateInterruptible {
+    /// Number of functions in the graph remaining to execute.
+    fns_remaining: usize,
+    /// Number of predecessors each function in the graph is waiting on.
+    predecessor_counts: Vec<usize>,
+    /// Channel sender for function IDs that are ready to run.
+    fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
+    /// State during processing a `FnGraph` stream.
+    fn_graph_stream_progress: StreamProgress<()>,
+}
+
 impl<F> Default for FnGraph<F> {
     fn default() -> Self {
         Self {
@@ -1268,13 +2193,6 @@ where
 }
 
 impl<F> Eq for FnGraph<F> where F: Eq {}
-
-#[cfg(feature = "async")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum IterDirection {
-    Forward,
-    Reverse,
-}
 
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
@@ -1589,7 +2507,7 @@ mod tests {
             time::{self, Duration, Instant},
         };
 
-        use crate::{Edge, FnGraph, FnGraphBuilder};
+        use crate::{Edge, FnGraph, FnGraphBuilder, StreamOpts, StreamOutcome, StreamOutcomeState};
 
         macro_rules! sleep_duration {
             () => {
@@ -1638,11 +2556,11 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stream_rev_returns_when_graph_is_empty() {
+        async fn stream_with_rev_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .stream_rev()
+                .stream_with(StreamOpts::new().rev())
                 .for_each(
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
@@ -1651,7 +2569,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stream_rev_returns_fns_in_dep_rev_order_concurrently()
+        async fn stream_with_rev_returns_fns_in_dep_rev_order_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -1663,9 +2581,21 @@ mod tests {
                 Duration::from_millis(200),
                 Duration::from_millis(255),
                 fn_graph
-                    .stream_rev()
+                    .stream_with(StreamOpts::new().rev())
                     .for_each_concurrent(None, |f| async move {
+                        #[cfg(not(feature = "interruptible"))]
                         let _ = f.call(resources).await;
+
+                        #[cfg(feature = "interruptible")]
+                        use interruptible::PollOutcome;
+
+                        #[cfg(feature = "interruptible")]
+                        match f {
+                            PollOutcome::Interrupted(None) => {}
+                            PollOutcome::Interrupted(Some(f)) | PollOutcome::NoInterrupt(f) => {
+                                let _ = f.call(resources).await;
+                            }
+                        }
                     }),
             )
             .await;
@@ -1681,20 +2611,20 @@ mod tests {
 
         #[tokio::test]
         async fn fold_async_returns_when_graph_is_empty() {
-            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
                 .fold_async(
                     (),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async {}),
+                    |(), _f| async {}.boxed_local(),
                 )
                 .await;
         }
 
         #[tokio::test]
-        async fn fold_async_runs_fns_in_dep_order_mut() -> Result<(), Box<dyn std::error::Error>> {
-            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+        async fn fold_async_runs_fns_in_dep_order() -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
             resources.insert(0u8);
@@ -1703,10 +2633,97 @@ mod tests {
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
                 fn_graph.fold_async(resources, |resources, f| {
-                    Box::pin(async move {
+                    async move {
+                        f.call(&resources).await;
+                        resources
+                    }
+                    .boxed_local()
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .take(6)
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn fold_async_with_returns_when_graph_is_empty() {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .fold_async_with(
+                    (),
+                    StreamOpts::new().rev(),
+                    #[cfg_attr(coverage_nightly, coverage(off))]
+                    |(), _f| Box::pin(async {}),
+                )
+                .await;
+        }
+
+        #[tokio::test]
+        async fn fold_async_with_runs_fns_in_dep_rev_order()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.fold_async_with(resources, StreamOpts::new().rev(), |resources, f| {
+                    async move {
+                        f.call(&resources).await;
+                        resources
+                    }
+                    .boxed_local()
+                }),
+            )
+            .await;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .take(6)
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn fold_async_mut_returns_when_graph_is_empty() {
+            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .fold_async_mut(
+                    (),
+                    #[cfg_attr(coverage_nightly, coverage(off))]
+                    |(), _f| async {}.boxed_local(),
+                )
+                .await;
+        }
+
+        #[tokio::test]
+        async fn fold_async_mut_runs_fns_in_dep_order() -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.fold_async_mut(resources, |resources, mut f| {
+                    async move {
                         f.call_mut(&resources).await;
                         resources
-                    })
+                    }
+                    .boxed_local()
                 }),
             )
             .await;
@@ -1720,20 +2737,21 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fold_rev_async_returns_when_graph_is_empty() {
+        async fn fold_async_mut_with_returns_when_graph_is_empty() {
             let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .fold_rev_async(
+                .fold_async_mut_with(
                     (),
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |(), _f| Box::pin(async {}),
+                    |(), _f| async {}.boxed_local(),
                 )
                 .await;
         }
 
         #[tokio::test]
-        async fn fold_rev_async_runs_fns_in_dep_rev_order_mut()
+        async fn fold_async_mut_with_runs_fns_in_dep_rev_order()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -1743,12 +2761,17 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(385), // On Windows the duration can be much higher
-                fn_graph.fold_rev_async(resources, |resources, f| {
-                    Box::pin(async move {
-                        f.call_mut(&resources).await;
-                        resources
-                    })
-                }),
+                fn_graph.fold_async_mut_with(
+                    resources,
+                    StreamOpts::new().rev(),
+                    |resources, mut f| {
+                        async move {
+                            f.call_mut(&resources).await;
+                            resources
+                        }
+                        .boxed_local()
+                    },
+                ),
             )
             .await;
 
@@ -1804,12 +2827,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_rev_returns_when_graph_is_empty() {
+        async fn for_each_concurrent_with_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
             fn_graph
-                .for_each_concurrent_rev(
+                .for_each_concurrent_with(
                     None,
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async {},
                 )
@@ -1817,7 +2841,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_rev_runs_fns_concurrently()
+        async fn for_each_concurrent_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -1828,7 +2852,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.for_each_concurrent_rev(None, |f| {
+                fn_graph.for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
@@ -1850,14 +2874,209 @@ mod tests {
         async fn try_for_each_concurrent_returns_when_graph_is_empty() -> Result<(), ()> {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph
+            let fn_graph_stream_outcome = fn_graph
                 .try_for_each_concurrent(
                     None,
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { Ok::<_, ()>(()) },
                 )
                 .await
-                .map_err(|_| ())
+                .map_err(|_| ())?;
+
+            assert_eq!(
+                StreamOutcome {
+                    value: (),
+                    state: StreamOutcomeState::Finished,
+                    fn_ids_processed: Vec::new(),
+                    fn_ids_not_processed: Vec::new(),
+                },
+                fn_graph_stream_outcome
+            );
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_returns_when_graph_is_empty() -> Result<(), TestError> {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .try_fold_async(
+                    (),
+                    #[cfg_attr(coverage_nightly, coverage(off))]
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
+                )
+                .await?;
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_runs_fns_in_dep_order() -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.try_fold_async(resources, |resources, f| {
+                    async move {
+                        f.call(&resources).await;
+                        Result::<_, TestError>::Ok(resources)
+                    }
+                    .boxed_local()
+                }),
+            )
+            .await?;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .take(6)
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_with_returns_when_graph_is_empty() -> Result<(), TestError> {
+            let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .try_fold_async_with(
+                    (),
+                    StreamOpts::new().rev(),
+                    #[cfg_attr(coverage_nightly, coverage(off))]
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
+                )
+                .await?;
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_with_runs_fns_in_dep_rev_order()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.try_fold_async_with(resources, StreamOpts::new().rev(), |resources, f| {
+                    async move {
+                        f.call(&resources).await;
+                        Result::<_, TestError>::Ok(resources)
+                    }
+                    .boxed_local()
+                }),
+            )
+            .await?;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .take(6)
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_mut_returns_when_graph_is_empty() -> Result<(), TestError> {
+            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .try_fold_async_mut(
+                    (),
+                    #[cfg_attr(coverage_nightly, coverage(off))]
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
+                )
+                .await?;
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_mut_runs_fns_in_dep_order() -> Result<(), Box<dyn std::error::Error>>
+        {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.try_fold_async_mut(resources, |resources, mut f| {
+                    async move {
+                        f.call_mut(&resources).await;
+                        Result::<_, TestError>::Ok(resources)
+                    }
+                    .boxed_local()
+                }),
+            )
+            .await?;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c", "b", "d", "e"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_mut_with_returns_when_graph_is_empty() -> Result<(), TestError> {
+            let mut fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
+
+            fn_graph
+                .try_fold_async_mut_with(
+                    (),
+                    StreamOpts::new().rev(),
+                    #[cfg_attr(coverage_nightly, coverage(off))]
+                    |(), _f| async { Result::<_, TestError>::Ok(()) }.boxed_local(),
+                )
+                .await?;
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn try_fold_async_mut_with_runs_fns_in_dep_rev_order()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(385), // On Windows the duration can be much higher
+                fn_graph.try_fold_async_mut_with(
+                    resources,
+                    StreamOpts::new().rev(),
+                    |resources, mut f| {
+                        async move {
+                            f.call_mut(&resources).await;
+                            Result::<_, TestError>::Ok(resources)
+                        }
+                        .boxed_local()
+                    },
+                ),
+            )
+            .await?;
+
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
         }
 
         #[tokio::test]
@@ -1919,7 +3138,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("a")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("a")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
@@ -1952,7 +3171,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("c")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("c")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
             assert_eq!("c", seq_rx.try_recv().unwrap());
@@ -1992,7 +3211,7 @@ mod tests {
             // complete.
             assert_eq!(
                 [TestError("c"), TestError("b")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
@@ -2004,21 +3223,34 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_returns_when_graph_is_empty() -> Result<(), ()> {
+        async fn try_for_each_concurrent_with_returns_when_graph_is_empty() -> Result<(), ()> {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            fn_graph
-                .try_for_each_concurrent_rev(
+            let fn_graph_stream_outcome = fn_graph
+                .try_for_each_concurrent_with(
                     None,
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
                     |_f| async { Ok::<_, ()>(()) },
                 )
                 .await
-                .map_err(|_| ())
+                .map_err(|_| ())?;
+
+            assert_eq!(
+                StreamOutcome {
+                    value: (),
+                    state: StreamOutcomeState::Finished,
+                    fn_ids_processed: Vec::new(),
+                    fn_ids_not_processed: Vec::new(),
+                },
+                fn_graph_stream_outcome
+            );
+
+            Ok(())
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_runs_fns_concurrently()
+        async fn try_for_each_concurrent_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2030,7 +3262,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
@@ -2052,7 +3284,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2064,7 +3296,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2076,7 +3308,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("e")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("e")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
@@ -2084,7 +3316,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2096,7 +3328,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2108,7 +3340,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("b")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("b")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
             assert_eq!("b", seq_rx.try_recv().unwrap());
@@ -2119,7 +3351,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2131,7 +3363,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2146,7 +3378,7 @@ mod tests {
 
             assert_eq!(
                 [TestError("b"), TestError("c")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
@@ -2187,7 +3419,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_mut_rev_runs_fns_concurrently()
+        async fn for_each_concurrent_mut_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2198,7 +3430,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.for_each_concurrent_mut_rev(None, |f| {
+                fn_graph.for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         let _ = fut.await;
@@ -2273,7 +3505,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("a")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("a")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
@@ -2306,7 +3538,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("c")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("c")], result.unwrap_err().1.as_slice());
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
             assert_eq!("c", seq_rx.try_recv().unwrap());
@@ -2346,7 +3578,7 @@ mod tests {
             // complete.
             assert_eq!(
                 [TestError("c"), TestError("b")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("f", seq_rx.try_recv().unwrap());
             assert_eq!("a", seq_rx.try_recv().unwrap());
@@ -2358,7 +3590,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_runs_fns_concurrently_mut()
+        async fn try_for_each_concurrent_mut_with_runs_fns_concurrently_mut()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2370,7 +3602,7 @@ mod tests {
             test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         let _ = fut.await;
@@ -2391,7 +3623,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2403,7 +3635,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         match fut.await {
@@ -2415,7 +3647,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("e")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("e")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap()); // "a" is sent before we err
             assert_eq!(TryRecvError::Empty, seq_rx.try_recv().unwrap_err());
 
@@ -2423,7 +3655,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2435,7 +3667,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         match fut.await {
@@ -2447,7 +3679,7 @@ mod tests {
             )
             .await;
 
-            assert_eq!([TestError("b")], result.unwrap_err().as_slice());
+            assert_eq!([TestError("b")], result.unwrap_err().1.as_slice());
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
             assert_eq!("b", seq_rx.try_recv().unwrap());
@@ -2458,7 +3690,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2470,7 +3702,7 @@ mod tests {
             let result = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_mut_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         match fut.await {
@@ -2485,7 +3717,7 @@ mod tests {
 
             assert_eq!(
                 [TestError("b"), TestError("c")],
-                result.unwrap_err().as_slice()
+                result.unwrap_err().1.as_slice()
             );
             assert_eq!("e", seq_rx.try_recv().unwrap());
             assert_eq!("d", seq_rx.try_recv().unwrap());
@@ -2500,11 +3732,11 @@ mod tests {
         async fn try_for_each_concurrent_control_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = fn_graph
                 .try_for_each_concurrent_control(
                     None,
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |_f| async { ControlFlow::Continue(()) },
+                    |_f| async { ControlFlow::<(), ()>::Continue(()) },
                 )
                 .await;
         }
@@ -2519,14 +3751,14 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
-                        ControlFlow::Continue(())
+                        ControlFlow::<(), ()>::Continue(())
                     }
                 }),
             )
@@ -2552,7 +3784,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
@@ -2584,7 +3816,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
@@ -2618,7 +3850,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
@@ -2644,20 +3876,21 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_returns_when_graph_is_empty() {
+        async fn try_for_each_concurrent_control_with_returns_when_graph_is_empty() {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = fn_graph
-                .try_for_each_concurrent_control_rev(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = fn_graph
+                .try_for_each_concurrent_control_with(
                     None,
+                    StreamOpts::new().rev(),
                     #[cfg_attr(coverage_nightly, coverage(off))]
-                    |_f| async { ControlFlow::Continue(()) },
+                    |_f| async { ControlFlow::<(), ()>::Continue(()) },
                 )
                 .await;
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_runs_fns_concurrently()
+        async fn try_for_each_concurrent_control_with_runs_fns_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2666,14 +3899,14 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         let _ = fut.await;
-                        ControlFlow::Continue(())
+                        ControlFlow::<(), ()>::Continue(())
                     }
                 }),
             )
@@ -2690,7 +3923,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2699,10 +3932,10 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2721,7 +3954,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2730,10 +3963,10 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2755,7 +3988,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
@@ -2764,10 +3997,10 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_rev(None, |f| {
+                fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
                         match fut.await {
@@ -2799,14 +4032,14 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
                         let _ = fut.await;
-                        ControlFlow::Continue(())
+                        ControlFlow::<(), ()>::Continue(())
                     }
                 }),
             )
@@ -2831,7 +4064,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
@@ -2863,7 +4096,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
@@ -2897,7 +4130,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(130),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
@@ -2923,7 +4156,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_runs_fns_concurrently_mut()
+        async fn try_for_each_concurrent_control_mut_with_runs_fns_concurrently_mut()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2932,16 +4165,20 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        let _ = fut.await;
-                        ControlFlow::Continue(())
-                    }
-                }),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    StreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            let _ = fut.await;
+                            ControlFlow::<(), ()>::Continue(())
+                        }
+                    },
+                ),
             )
             .await;
 
@@ -2955,7 +4192,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_one_function_returns_failure()
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2964,18 +4201,22 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(70),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "e" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    StreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "e" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
@@ -2986,7 +4227,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_one_function_returns_failure_variation()
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure_variation()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -2995,18 +4236,22 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "b" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    StreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 
@@ -3020,7 +4265,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_rev_gracefully_ends_when_multiple_functions_return_failure()
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_multiple_functions_return_failure()
         -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
@@ -3029,19 +4274,23 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let (ControlFlow::Continue(()) | ControlFlow::Break(())) = test_timeout(
+            let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(150),
                 Duration::from_millis(197),
-                fn_graph.try_for_each_concurrent_control_mut_rev(None, |f| {
-                    let fut = f.call_mut(resources);
-                    async move {
-                        match fut.await {
-                            "b" => ControlFlow::Break(()),
-                            "c" => ControlFlow::Break(()),
-                            _ => ControlFlow::Continue(()),
+                fn_graph.try_for_each_concurrent_control_mut_with(
+                    None,
+                    StreamOpts::new().rev(),
+                    |f| {
+                        let fut = f.call_mut(resources);
+                        async move {
+                            match fut.await {
+                                "b" => ControlFlow::Break(()),
+                                "c" => ControlFlow::Break(()),
+                                _ => ControlFlow::Continue(()),
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .await;
 

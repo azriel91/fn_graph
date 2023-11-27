@@ -17,12 +17,13 @@
 //! Add the following to `Cargo.toml`
 //!
 //! ```toml
-//! fn_graph = "0.8.1"
+//! fn_graph = "0.9.0"
 //!
-//! # Integrate with `fn_meta` and/or `resman`
-//! fn_graph = { version = "0.8.6", features = ["fn_meta"] }
-//! fn_graph = { version = "0.8.6", features = ["resman"] }
-//! fn_graph = { version = "0.8.6", features = ["fn_meta", "resman"] }
+//! # Integrate with `fn_meta` / `interruptible` / `resman`
+//! fn_graph = { version = "0.9.0", features = ["fn_meta"] }
+//! fn_graph = { version = "0.9.0", features = ["interruptible"] }
+//! fn_graph = { version = "0.9.0", features = ["resman"] }
+//! fn_graph = { version = "0.9.0", features = ["fn_meta", "interruptible", "resman"] }
 //! ```
 //!
 //! # Rationale
@@ -73,11 +74,13 @@
 //!
 //! ## See Also
 //!
-//! * [`fn_meta`]: Returns metadata about a function at runtime.
-//! * [`resman`]: Runtime managed resource borrowing.
-//! * [`shred`]: Shared resource dispatcher.
+//! * [`fn_meta`][`fn_meta`]: Returns metadata about a function at runtime.
+//! * [`interruptible`][`interruptible`]: Support for interruptible streams.
+//! * [`resman`][`resman`]: Runtime managed resource borrowing.
+//! * [`shred`][`shred`]: Shared resource dispatcher.
 //!
 //! [`fn_meta`]: https://github.com/azriel91/fn_meta
+//! [`interruptible`]: https://github.com/azriel91/interruptible
 //! [`resman`]: https://github.com/azriel91/resman
 //! [`shred`]: https://github.com/amethyst/shred
 //!
@@ -122,7 +125,30 @@ mod rank;
 mod type_ids;
 
 #[cfg(feature = "async")]
-pub use crate::fn_ref::FnRef;
+pub use crate::{
+    fn_ref::FnRef, fn_wrapper::FnWrapper, fn_wrapper_mut::FnWrapperMut, stream_opts::StreamOpts,
+};
+#[cfg(feature = "async")]
+pub(crate) use stream_order::StreamOrder;
 
 #[cfg(feature = "async")]
 mod fn_ref;
+#[cfg(feature = "async")]
+mod fn_wrapper;
+#[cfg(feature = "async")]
+mod fn_wrapper_mut;
+#[cfg(feature = "async")]
+mod stream_opts;
+#[cfg(feature = "async")]
+mod stream_order;
+
+#[cfg(feature = "async")]
+pub use crate::{
+    stream_outcome::{StreamOutcome, StreamOutcomeState},
+    stream_progress::{StreamProgress, StreamProgressState},
+};
+
+#[cfg(feature = "async")]
+mod stream_outcome;
+#[cfg(feature = "async")]
+mod stream_progress;
