@@ -3,6 +3,18 @@
 ## 0.9.0 (2023-11-28)
 
 * Add `interruptible` support` with `features = ["interruptible"]`.
+* Add `StreamOpts` to specify streaming options.
+* Add `FnGraph::stream_with`.
+* Add `FnGraph::fold_async_with`.
+* Add `FnGraph::fold_async_mut_with`.
+* Add `FnGraph::for_each_concurrent_with`.
+* Add `FnGraph::for_each_concurrent_mut_with`.
+* Add `FnGraph::try_fold_async_with`.
+* Add `FnGraph::try_fold_async_mut_with`.
+* Add `FnGraph::try_for_each_concurrent_with`.
+* Add `FnGraph::try_for_each_concurrent_control_with`.
+* Add `FnGraph::try_for_each_concurrent_mut_with`.
+* Add `FnGraph::try_for_each_concurrent_control_mut_with`.
 
 
 ## 0.8.6 (2023-09-23)
