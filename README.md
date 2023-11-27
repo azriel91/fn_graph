@@ -22,12 +22,13 @@ closures and functions, but any type that implements the [`FnRes`] and
 Add the following to `Cargo.toml`
 
 ```toml
-fn_graph = "0.8.1"
+fn_graph = "0.9.0"
 
-# Integrate with `fn_meta` and/or `resman`
+# Integrate with `fn_meta` / `interruptible` / `resman`
 fn_graph = { version = "0.9.0", features = ["fn_meta"] }
+fn_graph = { version = "0.9.0", features = ["interruptible"] }
 fn_graph = { version = "0.9.0", features = ["resman"] }
-fn_graph = { version = "0.9.0", features = ["fn_meta", "resman"] }
+fn_graph = { version = "0.9.0", features = ["fn_meta", "interruptible", "resman"] }
 ```
 
 # Rationale
@@ -78,11 +79,13 @@ The concept of a runtime managed data-dependency task graph is from
 
 ## See Also
 
-* [`fn_meta`]: Returns metadata about a function at runtime.
-* [`resman`]: Runtime managed resource borrowing.
-* [`shred`]: Shared resource dispatcher.
+* [`fn_meta`][`fn_meta`]: Returns metadata about a function at runtime.
+* [`interruptible`][`interruptible`]: Support for interruptible streams.
+* [`resman`][`resman`]: Runtime managed resource borrowing.
+* [`shred`][`shred`]: Shared resource dispatcher.
 
 [`fn_meta`]: https://github.com/azriel91/fn_meta
+[`interruptible`]: https://github.com/azriel91/interruptible
 [`resman`]: https://github.com/azriel91/resman
 [`shred`]: https://github.com/amethyst/shred
 

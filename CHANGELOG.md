@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0 (2023-11-28)
+
+* Add `interruptible` support` with `features = ["interruptible"]`.
+
+
 ## 0.8.6 (2023-09-23)
 
 * Update dependency versions.
