@@ -66,6 +66,29 @@ impl<T> StreamOutcome<T> {
         )
     }
 
+    /// Replaces the value from this outcome with another, taking the current
+    /// value as a parameter.
+    pub fn replace_with<TNew, U>(self, f: impl FnOnce(T) -> (TNew, U)) -> (StreamOutcome<TNew>, U) {
+        let StreamOutcome {
+            value,
+            state,
+            fn_ids_processed,
+            fn_ids_not_processed,
+        } = self;
+
+        let (value, extracted) = f(value);
+
+        (
+            StreamOutcome {
+                value,
+                state,
+                fn_ids_processed,
+                fn_ids_not_processed,
+            },
+            extracted,
+        )
+    }
+
     pub fn into_value(self) -> T {
         self.value
     }
@@ -166,6 +189,20 @@ mod tests {
         assert_eq!(1u16, n);
         assert_eq!(
             StreamOutcome::finished_with(2u32, vec![FnId::new(0)]),
+            stream_outcome
+        );
+    }
+
+    #[test]
+    fn replace_with() {
+        let stream_outcome =
+            StreamOutcome::finished_with((1u16, "value_to_extract"), vec![FnId::new(0)]);
+
+        let (stream_outcome, value) = stream_outcome.replace_with(|(n, value)| (n, value));
+
+        assert_eq!("value_to_extract", value);
+        assert_eq!(
+            StreamOutcome::finished_with(1u16, vec![FnId::new(0)]),
             stream_outcome
         );
     }

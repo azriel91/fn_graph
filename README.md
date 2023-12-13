@@ -22,13 +22,13 @@ closures and functions, but any type that implements the [`FnRes`] and
 Add the following to `Cargo.toml`
 
 ```toml
-fn_graph = "0.9.0"
+fn_graph = "0.9.1"
 
 # Integrate with `fn_meta` / `interruptible` / `resman`
-fn_graph = { version = "0.9.0", features = ["fn_meta"] }
-fn_graph = { version = "0.9.0", features = ["interruptible"] }
-fn_graph = { version = "0.9.0", features = ["resman"] }
-fn_graph = { version = "0.9.0", features = ["fn_meta", "interruptible", "resman"] }
+fn_graph = { version = "0.9.1", features = ["fn_meta"] }
+fn_graph = { version = "0.9.1", features = ["interruptible"] }
+fn_graph = { version = "0.9.1", features = ["resman"] }
+fn_graph = { version = "0.9.1", features = ["fn_meta", "interruptible", "resman"] }
 ```
 
 # Rationale

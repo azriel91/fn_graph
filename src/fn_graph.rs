@@ -1664,9 +1664,7 @@ impl<F> FnGraph<F> {
     /// Returns an iterator of function references in insertion order.
     ///
     /// To iterate in logical dependency order, see [`FnGraph::iter`].
-    pub fn iter_insertion(
-        &self,
-    ) -> impl Iterator<Item = &F> + ExactSizeIterator + DoubleEndedIterator {
+    pub fn iter_insertion(&self) -> impl ExactSizeIterator<Item = &F> + DoubleEndedIterator {
         use daggy::petgraph::visit::IntoNodeReferences;
         self.graph.node_references().map(|(_, function)| function)
     }
