@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.9.1 (2023-12-14)
 
 * Add `StreamOutcome::replace_with`.
 
