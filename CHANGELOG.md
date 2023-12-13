@@ -1,8 +1,13 @@
 # Changelog
 
+## unreleased
+
+* Add `StreamOutcome::replace_with`.
+
+
 ## 0.9.0 (2023-11-28)
 
-* Add `interruptible` support` with `features = ["interruptible"]`.
+* Add `interruptible` support with `features = ["interruptible"]`.
 * Add `StreamOpts` to specify streaming options.
 * Add `FnGraph::stream_with`.
 * Add `FnGraph::fold_async_with`.
