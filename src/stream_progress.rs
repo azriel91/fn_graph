@@ -14,23 +14,14 @@ pub struct StreamProgress<T> {
 }
 
 impl<T> StreamProgress<T> {
-    /// Returns an empty `FnGraphStreamOutcome`.
-    pub fn empty(value: T) -> Self {
+    /// Returns a new `FnGraphStreamProgress` with IDs of the functions to
+    /// process.
+    pub fn new(value: T, fn_ids_not_processed: Vec<FnId>) -> Self {
         Self {
             value,
             state: StreamProgressState::NotStarted,
-            fn_ids_processed: Vec::new(),
-            fn_ids_not_processed: Vec::new(),
-        }
-    }
-
-    /// Returns an empty `FnGraphStreamProgress` with the given capacity.
-    pub fn with_capacity(value: T, capacity: usize) -> Self {
-        Self {
-            value,
-            state: StreamProgressState::NotStarted,
-            fn_ids_processed: Vec::with_capacity(capacity),
-            fn_ids_not_processed: Vec::with_capacity(capacity),
+            fn_ids_processed: Vec::with_capacity(fn_ids_not_processed.len()),
+            fn_ids_not_processed,
         }
     }
 

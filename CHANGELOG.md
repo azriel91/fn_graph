@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0 (2023-12-28)
+
+* Replace `StreamProgress::{empty, with_capacity}` with `StreamProgress::new`.
+* Actually return values in `StreamOutcome::fn_ids_not_processed`.
+
+
 ## 0.9.1 (2023-12-14)
 
 * Add `StreamOutcome::replace_with`.
