@@ -1825,8 +1825,16 @@ async fn fn_ready_queuer<'f>(
     fn_ready_tx: Sender<FnId>,
     #[cfg(feature = "interruptible")] interruptibility_state: InterruptibilityState<'f, '_>,
 ) -> StreamOutcome<()> {
+    use daggy::petgraph::visit::IntoNodeReferences;
+
     let fns_remaining = graph_structure.node_count();
-    let mut fn_graph_stream_progress = StreamProgress::with_capacity((), fns_remaining);
+    let mut fn_graph_stream_progress = {
+        let fn_ids_not_processed = graph_structure
+            .node_references()
+            .map(|(fn_id, _f)| fn_id)
+            .collect::<Vec<_>>();
+        StreamProgress::new((), fn_ids_not_processed)
+    };
 
     let mut fn_ready_tx = Some(fn_ready_tx);
     if fns_remaining == 0 {
@@ -2497,7 +2505,7 @@ mod tests {
     mod async_tests {
         use std::{fmt, ops::ControlFlow};
 
-        use daggy::WouldCycle;
+        use daggy::{NodeIndex, WouldCycle};
         use futures::{future::BoxFuture, stream, Future, FutureExt, StreamExt};
         use resman::{FnRes, FnResMut, IntoFnRes, IntoFnResMut, Resources};
         use tokio::{
@@ -2505,7 +2513,9 @@ mod tests {
             time::{self, Duration, Instant},
         };
 
-        use crate::{Edge, FnGraph, FnGraphBuilder, StreamOpts, StreamOutcome, StreamOutcomeState};
+        use crate::{
+            Edge, FnGraph, FnGraphBuilder, FnIdInner, StreamOpts, StreamOutcome, StreamOutcomeState,
+        };
 
         macro_rules! sleep_duration {
             () => {
@@ -3257,7 +3267,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            test_timeout(
+            let fn_graph_stream_outcome = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
                 fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
@@ -3271,12 +3281,100 @@ mod tests {
             .await
             .unwrap();
 
+            let fn_ids_processed = [4, 3, 1, 2, 5, 0]
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+            assert_eq!(
+                StreamOutcome {
+                    value: (),
+                    state: StreamOutcomeState::Finished,
+                    fn_ids_processed,
+                    fn_ids_not_processed: Vec::new(),
+                },
+                fn_graph_stream_outcome
+            );
+
             seq_rx.close();
             let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
                 .collect::<Vec<&'static str>>()
                 .await;
 
             assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[cfg(feature = "interruptible")]
+        async fn try_for_each_concurrent_with_interrupt_returns_fn_ids_not_processed()
+        -> Result<(), Box<dyn std::error::Error>> {
+            use interruptible::{InterruptSignal, Interruptibility};
+
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (interrupt_tx, interrupt_rx) = mpsc::channel::<InterruptSignal>(16);
+            interrupt_tx
+                .send(InterruptSignal)
+                .await
+                .expect("Expected `InterruptSignal` to be sent successfully.");
+            let fn_graph_stream_outcome = test_timeout(
+                Duration::from_millis(100),
+                Duration::from_millis(155),
+                fn_graph.try_for_each_concurrent_with(
+                    None,
+                    StreamOpts::new().interruptibility_state(
+                        Interruptibility::poll_next_n(interrupt_rx.into(), 6).into(),
+                    ),
+                    |f| {
+                        let fut = f.call(resources);
+                        async move {
+                            let _ = fut.await;
+                            Result::<_, TestError>::Ok(())
+                        }
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+
+            let fn_ids_processed = [5, 0, 2]
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+
+            // Note: `FnId`s are in insertion order when not processed.
+            let fn_ids_not_processed = [1, 3, 4]
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+            assert_eq!(
+                StreamOutcome {
+                    value: (),
+                    state: StreamOutcomeState::Interrupted,
+                    fn_ids_processed,
+                    fn_ids_not_processed,
+                },
+                fn_graph_stream_outcome
+            );
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            // Note: Even though `b` is interrupted, we still see that part of its logic has
+            // run.
+            //
+            // This is significant for consumers e.g. `peace` where the a `CmdBlock` may be
+            // interrupted, and its output is observed, but it is still considered to be not
+            // processed.
+            assert_eq!(["f", "a", "c", "b"], fn_iter_order.as_slice());
 
             Ok(())
         }
