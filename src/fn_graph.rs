@@ -1268,12 +1268,7 @@ impl<F> FnGraph<F> {
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(graph_structure)
-            .iter(graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        fns_preload_no_predecessors(graph_structure, &predecessor_counts, &fn_ready_tx);
 
         let queuer = fn_ready_queuer(
             graph_structure,
@@ -1519,12 +1514,7 @@ impl<F> FnGraph<F> {
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-        // Preload the channel with all of the functions that have no predecessors
-        Topo::new(graph_structure)
-            .iter(graph_structure)
-            .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-            .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-            .expect("Failed to preload function with no predecessors.");
+        fns_preload_no_predecessors(graph_structure, &predecessor_counts, &fn_ready_tx);
 
         let queuer = fn_ready_queuer(
             graph_structure,
@@ -1685,6 +1675,20 @@ impl<F> FnGraph<F> {
     }
 }
 
+/// Preloads the `fn_ready` channel with all of the functions that have no
+/// predecessors
+fn fns_preload_no_predecessors(
+    graph_structure: &Dag<(), Edge, FnIdInner>,
+    predecessor_counts: &[usize],
+    fn_ready_tx: &Sender<NodeIndex<FnIdInner>>,
+) {
+    Topo::new(graph_structure)
+        .iter(graph_structure)
+        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+        .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
+        .expect("Failed to preload function with no predecessors.");
+}
+
 /// Sends the ID of a processed function to the queuer.
 ///
 /// Used by the scheduler.
@@ -1749,12 +1753,7 @@ fn stream_setup_init<'f>(
     let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
     let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-    // Preload the channel with all of the functions that have no predecessors
-    Topo::new(&graph_structure)
-        .iter(&graph_structure)
-        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-        .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
-        .expect("Failed to preload function with no predecessors.");
+    fns_preload_no_predecessors(graph_structure, &predecessor_counts, &fn_ready_tx);
 
     StreamSetupInit {
         graph_structure,
