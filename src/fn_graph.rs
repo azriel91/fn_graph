@@ -401,15 +401,14 @@ impl<F> FnGraph<F> {
             (seed, fn_ids_processed)
         };
 
-        let (fn_graph_stream_progress, (seed, fn_ids_processed)) =
-            futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, (seed, fn_ids_processed)) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
 
-        fn_graph_stream_outcome.map(|()| seed)
+        stream_outcome.map(|()| seed)
     }
 
     /// Returns a stream of function references in topological order.
@@ -561,15 +560,14 @@ impl<F> FnGraph<F> {
             (seed, fn_ids_processed)
         };
 
-        let (fn_graph_stream_progress, (seed, fn_ids_processed)) =
-            futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, (seed, fn_ids_processed)) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
 
-        fn_graph_stream_outcome.map(|()| seed)
+        stream_outcome.map(|()| seed)
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -683,13 +681,13 @@ impl<F> FnGraph<F> {
             fn_ids_processed
         };
 
-        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
-        fn_graph_stream_outcome
+        stream_outcome
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -806,13 +804,13 @@ impl<F> FnGraph<F> {
             fn_ids_processed
         };
 
-        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
-        fn_graph_stream_outcome
+        stream_outcome
     }
 
     /// Returns a stream of function references in topological order.
@@ -984,15 +982,14 @@ impl<F> FnGraph<F> {
             (seed_result, fn_ids_processed)
         };
 
-        let (fn_graph_stream_progress, (seed_result, fn_ids_processed)) =
-            futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, (seed_result, fn_ids_processed)) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
 
-        seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
+        seed_result.map(|seed| stream_outcome.map(|()| seed))
     }
 
     /// Returns a stream of function references in topological order.
@@ -1164,15 +1161,14 @@ impl<F> FnGraph<F> {
             (seed_result, fn_ids_processed)
         };
 
-        let (fn_graph_stream_progress, (seed_result, fn_ids_processed)) =
-            futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, (seed_result, fn_ids_processed)) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
 
-        seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
+        seed_result.map(|seed| stream_outcome.map(|()| seed))
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -1418,10 +1414,10 @@ impl<F> FnGraph<F> {
             fn_ids_processed
         };
 
-        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
 
@@ -1430,9 +1426,9 @@ impl<F> FnGraph<F> {
             .await;
 
         if results.is_empty() {
-            Ok(fn_graph_stream_outcome)
+            Ok(stream_outcome)
         } else {
-            Err((fn_graph_stream_outcome, results))
+            Err((stream_outcome, results))
         }
     }
 
@@ -1682,10 +1678,10 @@ impl<F> FnGraph<F> {
             fn_ids_processed
         };
 
-        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+        let (stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let stream_outcome = StreamOutcome::from_progress_and_processed(
             &graph_structure,
-            fn_graph_stream_progress,
+            stream_progress,
             fn_ids_processed,
         );
 
@@ -1694,9 +1690,9 @@ impl<F> FnGraph<F> {
             .await;
 
         if results.is_empty() {
-            Ok(fn_graph_stream_outcome)
+            Ok(stream_outcome)
         } else {
-            Err((fn_graph_stream_outcome, results))
+            Err((stream_outcome, results))
         }
     }
 
@@ -1956,11 +1952,11 @@ async fn fn_ready_queuer<'f>(
     #[cfg(feature = "interruptible")] interruptibility_state: InterruptibilityState<'f, '_>,
 ) -> StreamProgress<()> {
     let fns_remaining = graph_structure.node_count();
-    let mut fn_graph_stream_progress = StreamProgress::new(());
+    let mut stream_progress = StreamProgress::new(());
 
     let mut fn_ready_tx = Some(fn_ready_tx);
     if fns_remaining == 0 {
-        fn_graph_stream_progress.state = StreamProgressState::Finished;
+        stream_progress.state = StreamProgressState::Finished;
         fn_ready_tx.take();
     }
     let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
@@ -1978,7 +1974,7 @@ async fn fn_ready_queuer<'f>(
             fns_remaining,
             predecessor_counts,
             fn_ready_tx,
-            fn_graph_stream_progress,
+            stream_progress,
         };
         queuer_stream_fold_interruptible(
             stream.interruptible_with(interruptibility_state),
@@ -2066,10 +2062,10 @@ where
                     mut fns_remaining,
                     mut predecessor_counts,
                     mut fn_ready_tx,
-                    mut fn_graph_stream_progress,
+                    mut stream_progress,
                 } = queuer_stream_state_interruptible;
 
-                let StreamProgress { value: (), state } = &mut fn_graph_stream_progress;
+                let StreamProgress { value: (), state } = &mut stream_progress;
 
                 let (fn_id, interrupted) = match poll_outcome {
                     PollOutcome::Interrupted(fn_id_opt) => (fn_id_opt, true),
@@ -2121,18 +2117,17 @@ where
                     fns_remaining,
                     predecessor_counts,
                     fn_ready_tx,
-                    fn_graph_stream_progress,
+                    stream_progress,
                 }
             },
         )
         .await;
 
     let QueuerStreamStateInterruptible {
-        fn_graph_stream_progress,
-        ..
+        stream_progress, ..
     } = queuer_stream_state_interruptible;
 
-    fn_graph_stream_progress
+    stream_progress
 }
 
 #[cfg(feature = "async")]
@@ -2216,7 +2211,7 @@ struct QueuerStreamStateInterruptible {
     /// Channel sender for function IDs that are ready to run.
     fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
     /// State during processing a `FnGraph` stream.
-    fn_graph_stream_progress: StreamProgress<()>,
+    stream_progress: StreamProgress<()>,
 }
 
 impl<F> Default for FnGraph<F> {
@@ -2978,7 +2973,7 @@ mod tests {
         async fn try_for_each_concurrent_returns_when_graph_is_empty() -> Result<(), ()> {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            let fn_graph_stream_outcome = fn_graph
+            let stream_outcome = fn_graph
                 .try_for_each_concurrent(
                     None,
                     #[cfg_attr(coverage_nightly, coverage(off))]
@@ -2994,7 +2989,7 @@ mod tests {
                     fn_ids_processed: Vec::new(),
                     fn_ids_not_processed: Vec::new(),
                 },
-                fn_graph_stream_outcome
+                stream_outcome
             );
 
             Ok(())
@@ -3330,7 +3325,7 @@ mod tests {
         async fn try_for_each_concurrent_with_returns_when_graph_is_empty() -> Result<(), ()> {
             let fn_graph = FnGraph::<Box<dyn FnRes<Ret = ()>>>::new();
 
-            let fn_graph_stream_outcome = fn_graph
+            let stream_outcome = fn_graph
                 .try_for_each_concurrent_with(
                     None,
                     StreamOpts::new().rev(),
@@ -3347,7 +3342,7 @@ mod tests {
                     fn_ids_processed: Vec::new(),
                     fn_ids_not_processed: Vec::new(),
                 },
-                fn_graph_stream_outcome
+                stream_outcome
             );
 
             Ok(())
@@ -3363,7 +3358,7 @@ mod tests {
             resources.insert(0u16);
             let resources = &resources;
 
-            let fn_graph_stream_outcome = test_timeout(
+            let stream_outcome = test_timeout(
                 Duration::from_millis(200),
                 Duration::from_millis(255),
                 fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
@@ -3388,7 +3383,7 @@ mod tests {
                     fn_ids_processed,
                     fn_ids_not_processed: Vec::new(),
                 },
-                fn_graph_stream_outcome
+                stream_outcome
             );
 
             seq_rx.close();
@@ -3419,7 +3414,7 @@ mod tests {
                 .send(InterruptSignal)
                 .await
                 .expect("Expected `InterruptSignal` to be sent successfully.");
-            let fn_graph_stream_outcome = test_timeout(
+            let stream_outcome = test_timeout(
                 Duration::from_millis(100),
                 Duration::from_millis(155),
                 fn_graph.try_for_each_concurrent_with(
@@ -3456,7 +3451,7 @@ mod tests {
                     fn_ids_processed,
                     fn_ids_not_processed,
                 },
-                fn_graph_stream_outcome
+                stream_outcome
             );
 
             seq_rx.close();
@@ -3493,7 +3488,7 @@ mod tests {
                 .send(InterruptSignal)
                 .await
                 .expect("Expected `InterruptSignal` to be sent successfully.");
-            let fn_graph_stream_outcome = test_timeout(
+            let stream_outcome = test_timeout(
                 Duration::from_millis(50),
                 Duration::from_millis(75),
                 fn_graph.try_for_each_concurrent_with(
@@ -3531,7 +3526,7 @@ mod tests {
                     fn_ids_processed,
                     fn_ids_not_processed,
                 },
-                fn_graph_stream_outcome
+                stream_outcome
             );
 
             seq_rx.close();
