@@ -27,6 +27,26 @@ impl<T> StreamOutcome<T> {
         }
     }
 
+    /// Returns a new `FnGraphStreamOutcome` using values from `StreamProgress`
+    /// and the provided `fn_ids_processed`.
+    pub fn from_progress_and_processed(
+        fn_graph_stream_progress: StreamProgress<T>,
+        fn_ids_processed: Vec<FnId>,
+    ) -> Self {
+        let StreamProgress {
+            value,
+            state,
+            fn_ids_not_processed,
+        } = fn_graph_stream_progress;
+
+        Self {
+            value,
+            state: state.into(),
+            fn_ids_processed,
+            fn_ids_not_processed,
+        }
+    }
+
     /// Maps this outcome's value to another.
     pub fn map<TNew>(self, f: impl FnOnce(T) -> TNew) -> StreamOutcome<TNew> {
         let StreamOutcome {
@@ -124,24 +144,6 @@ where
             state: StreamOutcomeState::NotStarted,
             fn_ids_processed: Vec::new(),
             fn_ids_not_processed: Vec::new(),
-        }
-    }
-}
-
-impl<T> From<StreamProgress<T>> for StreamOutcome<T> {
-    fn from(fn_graph_stream_progress: StreamProgress<T>) -> Self {
-        let StreamProgress {
-            value,
-            state,
-            fn_ids_processed,
-            fn_ids_not_processed,
-        } = fn_graph_stream_progress;
-
-        Self {
-            value,
-            state: state.into(),
-            fn_ids_processed,
-            fn_ids_not_processed,
         }
     }
 }

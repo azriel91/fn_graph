@@ -350,36 +350,45 @@ impl<F> FnGraph<F> {
             fn_fold,
         };
         let scheduler = async move {
-            let fold_stream_state = stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .fold(fold_stream_state, |fold_stream_state, fn_id| async move {
-                    let FoldStreamState {
-                        graph,
-                        mut fns_remaining,
-                        mut fn_done_tx,
-                        seed,
-                        fn_fold,
-                    } = fold_stream_state;
-                    let r#fn = &graph[fn_id];
-                    let seed = fn_fold(seed, FnWrapper::new(r#fn)).await;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
-
-                    FoldStreamState {
-                        graph,
-                        fns_remaining,
-                        fn_done_tx,
-                        seed,
-                        fn_fold,
-                    }
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            let fold_stream_state = stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await;
+            })
+            .fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                let FoldStreamState {
+                    graph,
+                    mut fns_remaining,
+                    mut fn_done_tx,
+                    seed,
+                    fn_fold,
+                } = fold_stream_state;
+
+                let r#fn = &graph[fn_id];
+                let seed = fn_fold(seed, FnWrapper::new(r#fn)).await;
+                if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                    fn_done_send(fn_done_tx, fn_id).await;
+                }
+
+                // Close `fn_done_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    fn_done_tx.take();
+                }
+
+                FoldStreamState {
+                    graph,
+                    fns_remaining,
+                    fn_done_tx,
+                    seed,
+                    fn_fold,
+                }
+            })
+            .await;
 
             let FoldStreamState {
                 graph: _,
@@ -389,10 +398,13 @@ impl<F> FnGraph<F> {
                 fn_fold: _,
             } = fold_stream_state;
 
-            seed
+            (seed, fn_ids_processed)
         };
 
-        let (fn_graph_stream_outcome, seed) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, (seed, fn_ids_processed)) =
+            futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
 
         fn_graph_stream_outcome.map(|()| seed)
     }
@@ -495,36 +507,45 @@ impl<F> FnGraph<F> {
             fn_fold,
         };
         let scheduler = async move {
-            let fold_stream_state = stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .fold(fold_stream_state, |fold_stream_state, fn_id| async move {
-                    let FoldStreamStateMut {
-                        graph,
-                        mut fns_remaining,
-                        mut fn_done_tx,
-                        seed,
-                        mut fn_fold,
-                    } = fold_stream_state;
-                    let r#fn = &mut graph[fn_id];
-                    let seed = fn_fold(seed, FnWrapperMut::new(r#fn)).await;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
-
-                    FoldStreamStateMut {
-                        graph,
-                        fns_remaining,
-                        fn_done_tx,
-                        seed,
-                        fn_fold,
-                    }
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            let fold_stream_state = stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await;
+            })
+            .fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                let FoldStreamStateMut {
+                    graph,
+                    mut fns_remaining,
+                    mut fn_done_tx,
+                    seed,
+                    mut fn_fold,
+                } = fold_stream_state;
+
+                let r#fn = &mut graph[fn_id];
+                let seed = fn_fold(seed, FnWrapperMut::new(r#fn)).await;
+                if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                    fn_done_send(fn_done_tx, fn_id).await;
+                }
+
+                // Close `fn_done_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    fn_done_tx.take();
+                }
+
+                FoldStreamStateMut {
+                    graph,
+                    fns_remaining,
+                    fn_done_tx,
+                    seed,
+                    fn_fold,
+                }
+            })
+            .await;
 
             let FoldStreamStateMut {
                 graph: _,
@@ -534,10 +555,13 @@ impl<F> FnGraph<F> {
                 fn_fold: _,
             } = fold_stream_state;
 
-            seed
+            (seed, fn_ids_processed)
         };
 
-        let (fn_graph_stream_outcome, seed) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, (seed, fn_ids_processed)) =
+            futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
 
         fn_graph_stream_outcome.map(|()| seed)
     }
@@ -633,17 +657,29 @@ impl<F> FnGraph<F> {
             fn_done_tx.write().await.take();
         }
         let scheduler = async move {
-            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .for_each_concurrent(limit, |fn_id| async move {
-                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
-                    fn_for_each(r#fn).await;
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await;
+            })
+            .for_each_concurrent(limit, |fn_id| async move {
+                let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                fn_for_each(r#fn).await;
+                fn_done_send_locked(fn_done_tx, fn_id).await;
+                fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            })
+            .await;
+
+            fn_ids_processed
         };
 
-        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
         fn_graph_stream_outcome
     }
 
@@ -739,19 +775,31 @@ impl<F> FnGraph<F> {
             fn_done_tx.write().await.take();
         }
         let scheduler = async move {
-            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .for_each_concurrent(limit, |fn_id| async move {
-                    let mut r#fn = fn_mut_refs[fn_id.index()]
-                        .try_write()
-                        .expect("Expected to borrow fn mutably.");
-                    fn_for_each(&mut r#fn).await;
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await;
+            })
+            .for_each_concurrent(limit, |fn_id| async move {
+                let mut r#fn = fn_mut_refs[fn_id.index()]
+                    .try_write()
+                    .expect("Expected to borrow fn mutably.");
+                fn_for_each(&mut r#fn).await;
+                fn_done_send_locked(fn_done_tx, fn_id).await;
+                fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            })
+            .await;
+
+            fn_ids_processed
         };
 
-        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
         fn_graph_stream_outcome
     }
 
@@ -867,53 +915,67 @@ impl<F> FnGraph<F> {
             fn_fold: fn_try_fold,
         };
         let scheduler = async move {
-            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .map(Result::<_, E>::Ok)
-                .try_fold(fold_stream_state, |fold_stream_state, fn_id| async move {
-                    let FoldStreamState {
-                        graph,
-                        mut fns_remaining,
-                        mut fn_done_tx,
-                        seed,
-                        fn_fold: fn_try_fold,
-                    } = fold_stream_state;
-                    let r#fn = &graph[fn_id];
-                    let seed = fn_try_fold(seed, FnWrapper::new(r#fn)).await?;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
-
-                    let fold_stream_state = FoldStreamState {
-                        graph,
-                        fns_remaining,
-                        fn_done_tx,
-                        seed,
-                        fn_fold: fn_try_fold,
-                    };
-
-                    Ok(fold_stream_state)
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            let seed_result = stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await
-                .map(|fold_stream_state| {
-                    let FoldStreamState {
-                        graph: _,
-                        fns_remaining: _,
-                        fn_done_tx: _,
-                        seed,
-                        fn_fold: _,
-                    } = fold_stream_state;
+            })
+            .map(Result::<_, E>::Ok)
+            .try_fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                let FoldStreamState {
+                    graph,
+                    mut fns_remaining,
+                    mut fn_done_tx,
+                    seed,
+                    fn_fold: fn_try_fold,
+                } = fold_stream_state;
 
-                    seed
-                })
+                let r#fn = &graph[fn_id];
+                let seed = fn_try_fold(seed, FnWrapper::new(r#fn)).await?;
+                if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                    fn_done_send(fn_done_tx, fn_id).await;
+                }
+
+                // Close `fn_done_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    fn_done_tx.take();
+                }
+
+                let fold_stream_state = FoldStreamState {
+                    graph,
+                    fns_remaining,
+                    fn_done_tx,
+                    seed,
+                    fn_fold: fn_try_fold,
+                };
+
+                Ok(fold_stream_state)
+            })
+            .await
+            .map(|fold_stream_state| {
+                let FoldStreamState {
+                    graph: _,
+                    fns_remaining: _,
+                    fn_done_tx: _,
+                    seed,
+                    fn_fold: _,
+                } = fold_stream_state;
+
+                seed
+            });
+
+            (seed_result, fn_ids_processed)
         };
 
-        let (fn_graph_stream_outcome, seed_result) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, (seed_result, fn_ids_processed)) =
+            futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
 
         seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
     }
@@ -1031,53 +1093,66 @@ impl<F> FnGraph<F> {
             fn_fold: fn_try_fold,
         };
         let scheduler = async move {
-            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .map(Result::<_, E>::Ok)
-                .try_fold(fold_stream_state, |fold_stream_state, fn_id| async move {
-                    let FoldStreamStateMut {
-                        graph,
-                        mut fns_remaining,
-                        mut fn_done_tx,
-                        seed,
-                        fn_fold: mut fn_try_fold,
-                    } = fold_stream_state;
-                    let r#fn = &mut graph[fn_id];
-                    let seed = fn_try_fold(seed, FnWrapperMut::new(r#fn)).await?;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
-                    }
-
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
-
-                    let fold_stream_state = FoldStreamStateMut {
-                        graph,
-                        fns_remaining,
-                        fn_done_tx,
-                        seed,
-                        fn_fold: fn_try_fold,
-                    };
-
-                    Ok(fold_stream_state)
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            let seed_result = stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await
-                .map(|fold_stream_state| {
-                    let FoldStreamStateMut {
-                        graph: _,
-                        fns_remaining: _,
-                        fn_done_tx: _,
-                        seed,
-                        fn_fold: _,
-                    } = fold_stream_state;
+            })
+            .map(Result::<_, E>::Ok)
+            .try_fold(fold_stream_state, |fold_stream_state, fn_id| async move {
+                let FoldStreamStateMut {
+                    graph,
+                    mut fns_remaining,
+                    mut fn_done_tx,
+                    seed,
+                    fn_fold: mut fn_try_fold,
+                } = fold_stream_state;
 
-                    seed
-                })
+                let r#fn = &mut graph[fn_id];
+                let seed = fn_try_fold(seed, FnWrapperMut::new(r#fn)).await?;
+                if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                    fn_done_send(fn_done_tx, fn_id).await;
+                }
+
+                // Close `fn_done_rx` when all functions have been executed,
+                fns_remaining -= 1;
+                if fns_remaining == 0 {
+                    fn_done_tx.take();
+                }
+
+                let fold_stream_state = FoldStreamStateMut {
+                    graph,
+                    fns_remaining,
+                    fn_done_tx,
+                    seed,
+                    fn_fold: fn_try_fold,
+                };
+
+                Ok(fold_stream_state)
+            })
+            .await
+            .map(|fold_stream_state| {
+                let FoldStreamStateMut {
+                    graph: _,
+                    fns_remaining: _,
+                    fn_done_tx: _,
+                    seed,
+                    fn_fold: _,
+                } = fold_stream_state;
+
+                seed
+            });
+            (seed_result, fn_ids_processed)
         };
 
-        let (fn_graph_stream_outcome, seed_result) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, (seed_result, fn_ids_processed)) =
+            futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
 
         seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
     }
@@ -1293,29 +1368,41 @@ impl<F> FnGraph<F> {
         let scheduler = async move {
             let result_tx_ref = &result_tx;
 
-            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .for_each_concurrent(limit, |fn_id| async move {
-                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
-                    if let Err(e) = fn_try_for_each(r#fn).await {
-                        result_tx_ref
-                            .send(e)
-                            .await
-                            .expect("Scheduler failed to send Err result in `result_tx`.");
-
-                        // Close `fn_done_rx`, which means `fn_ready_queuer` should return
-                        // `Poll::Ready(None)`.
-                        fn_done_tx.write().await.take();
-                    };
-
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await;
+            })
+            .for_each_concurrent(limit, |fn_id| async move {
+                let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                if let Err(e) = fn_try_for_each(r#fn).await {
+                    result_tx_ref
+                        .send(e)
+                        .await
+                        .expect("Scheduler failed to send Err result in `result_tx`.");
+
+                    // Close `fn_done_rx`, which means `fn_ready_queuer` should return
+                    // `Poll::Ready(None)`.
+                    fn_done_tx.write().await.take();
+                };
+
+                fn_done_send_locked(fn_done_tx, fn_id).await;
+                fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            })
+            .await;
 
             drop(result_tx);
+
+            fn_ids_processed
         };
 
-        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -1540,31 +1627,43 @@ impl<F> FnGraph<F> {
         let scheduler = async move {
             let result_tx_ref = &result_tx;
 
-            stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
-                .for_each_concurrent(limit, |fn_id| async move {
-                    let mut r#fn = fn_mut_refs[fn_id.index()]
-                        .try_write()
-                        .expect("Expected to borrow fn mutably.");
-                    if let Err(e) = fn_try_for_each(&mut r#fn).await {
-                        result_tx_ref
-                            .send(e)
-                            .await
-                            .expect("Scheduler failed to send Err result in `result_tx`.");
-
-                        // Close `fn_done_rx`, which means `fn_ready_queuer` should return
-                        // `Poll::Ready(None)`.
-                        fn_done_tx.write().await.take();
-                    };
-
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            let mut fn_ids_processed = Vec::with_capacity(graph_structure.node_count());
+            stream::poll_fn(|context| {
+                fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
+                    fn_id_opt.map(|fn_id| {
+                        fn_ids_processed.push(fn_id);
+                        fn_id
+                    })
                 })
-                .await;
+            })
+            .for_each_concurrent(limit, |fn_id| async move {
+                let mut r#fn = fn_mut_refs[fn_id.index()]
+                    .try_write()
+                    .expect("Expected to borrow fn mutably.");
+                if let Err(e) = fn_try_for_each(&mut r#fn).await {
+                    result_tx_ref
+                        .send(e)
+                        .await
+                        .expect("Scheduler failed to send Err result in `result_tx`.");
+
+                    // Close `fn_done_rx`, which means `fn_ready_queuer` should return
+                    // `Poll::Ready(None)`.
+                    fn_done_tx.write().await.take();
+                };
+
+                fn_done_send_locked(fn_done_tx, fn_id).await;
+                fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+            })
+            .await;
 
             drop(result_tx);
+
+            fn_ids_processed
         };
 
-        let (fn_graph_stream_outcome, ()) = futures::join!(queuer, scheduler);
+        let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
+        let fn_graph_stream_outcome =
+            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -1789,7 +1888,7 @@ fn stream_setup_init_concurrent<'f>(
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
     opts: StreamOpts<'f, 'f>,
-) -> StreamSetupInitConcurrent<'f, impl Future<Output = StreamOutcome<()>> + 'f> {
+) -> StreamSetupInitConcurrent<'f, impl Future<Output = StreamProgress<()>> + 'f> {
     let StreamOpts {
         stream_order,
         #[cfg(feature = "interruptible")]
@@ -1841,15 +1940,13 @@ async fn fn_ready_queuer<'f>(
     mut fn_done_rx: Receiver<FnId>,
     fn_ready_tx: Sender<FnId>,
     #[cfg(feature = "interruptible")] interruptibility_state: InterruptibilityState<'f, '_>,
-) -> StreamOutcome<()> {
+) -> StreamProgress<()> {
     let fns_remaining = graph_structure.node_count();
     let mut fn_graph_stream_progress = {
-        let fn_ids_processed =
-            fns_no_predecessors(graph_structure, &predecessor_counts).collect::<Vec<_>>();
         let fn_ids_not_processed =
             fns_with_predecessors(graph_structure, &predecessor_counts).collect::<Vec<_>>();
 
-        StreamProgress::new((), fn_ids_processed, fn_ids_not_processed)
+        StreamProgress::new((), fn_ids_not_processed)
     };
 
     let mut fn_ready_tx = Some(fn_ready_tx);
@@ -1891,8 +1988,8 @@ async fn queuer_stream_fold(
     >,
     queuer_stream_state: QueuerStreamState,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-) -> StreamOutcome<()> {
-    let queuer_stream_state = stream
+) -> StreamProgress<()> {
+    let _queuer_stream_state = stream
         .fold(
             queuer_stream_state,
             move |queuer_stream_state, fn_id| async move {
@@ -1900,7 +1997,6 @@ async fn queuer_stream_fold(
                     mut fns_remaining,
                     mut predecessor_counts,
                     mut fn_ready_tx,
-                    mut fn_ids_processed,
                 } = queuer_stream_state;
 
                 // Close `fn_ready_rx` when all functions have been executed,
@@ -1908,9 +2004,6 @@ async fn queuer_stream_fold(
                 if fns_remaining == 0 {
                     fn_ready_tx.take();
                 }
-
-                // Mark `fn_id` as processed.
-                fn_ids_processed.push(fn_id);
 
                 graph_structure
                     .children(fn_id)
@@ -1937,17 +2030,12 @@ async fn queuer_stream_fold(
                     fns_remaining,
                     predecessor_counts,
                     fn_ready_tx,
-                    fn_ids_processed,
                 }
             },
         )
         .await;
 
-    let QueuerStreamState {
-        fn_ids_processed, ..
-    } = queuer_stream_state;
-
-    StreamOutcome::finished_with((), fn_ids_processed)
+    StreamProgress::finished_with(())
 }
 
 /// Polls the queuer stream until completed or interrupted.
@@ -1956,7 +2044,7 @@ async fn queuer_stream_fold_interruptible<'rx, 'intx, S>(
     stream: InterruptibleStream<'rx, 'intx, S>,
     queuer_stream_state_interruptible: QueuerStreamStateInterruptible,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-) -> StreamOutcome<()>
+) -> StreamProgress<()>
 where
     S: Stream<Item = NodeIndex<FnIdInner>>,
     InterruptibleStream<'rx, 'intx, S>: Stream<Item = PollOutcome<FnId>>,
@@ -1975,7 +2063,6 @@ where
                 let StreamProgress {
                     value: (),
                     state,
-                    ref mut fn_ids_processed,
                     ref mut fn_ids_not_processed,
                 } = &mut fn_graph_stream_progress;
 
@@ -1998,8 +2085,6 @@ where
                 }
 
                 if let Some(fn_id) = fn_id {
-                    // Mark `fn_id` as processed.
-                    fn_ids_processed.push(fn_id);
                     if let Some(fn_id_pos) = fn_ids_not_processed
                         .iter()
                         .position(|fn_id_iter| fn_id == *fn_id_iter)
@@ -2049,7 +2134,7 @@ where
         ..
     } = queuer_stream_state_interruptible;
 
-    StreamOutcome::from(fn_graph_stream_progress)
+    fn_graph_stream_progress
 }
 
 #[cfg(feature = "async")]
@@ -2107,8 +2192,6 @@ struct QueuerStreamState {
     predecessor_counts: Vec<usize>,
     /// Channel sender for function IDs that are ready to run.
     fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
-    /// IDs of the items that are processed.
-    fn_ids_processed: Vec<FnId>,
 }
 
 #[cfg(all(feature = "async", not(feature = "interruptible")))]
@@ -2122,7 +2205,6 @@ impl QueuerStreamState {
             fns_remaining,
             predecessor_counts,
             fn_ready_tx,
-            fn_ids_processed: Vec::with_capacity(fns_remaining),
         }
     }
 }
@@ -3359,13 +3441,13 @@ mod tests {
             .await
             .unwrap();
 
-            let fn_ids_processed = [5, 0, 2] // "f", "a", "c"
+            let fn_ids_processed = [5, 0, 2, 1] // "f", "a", "c", "b"
                 .into_iter()
                 .map(NodeIndex::new)
                 .collect::<Vec<NodeIndex<FnIdInner>>>();
 
             // Note: `FnId`s are in insertion order when not processed.
-            let fn_ids_not_processed = [1, 3, 4] // "b", "d", "e"
+            let fn_ids_not_processed = [3, 4] // "d", "e"
                 .into_iter()
                 .map(NodeIndex::new)
                 .collect::<Vec<NodeIndex<FnIdInner>>>();
