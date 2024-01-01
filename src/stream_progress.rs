@@ -1,5 +1,3 @@
-use crate::FnId;
-
 /// State during processing a `FnGraph` stream, and the IDs that are processed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamProgress<T> {
@@ -7,18 +5,15 @@ pub struct StreamProgress<T> {
     pub(crate) value: T,
     /// State during processing a `FnGraph` stream.
     pub(crate) state: StreamProgressState,
-    /// IDs of the items that are yet to be processed.
-    pub(crate) fn_ids_not_processed: Vec<FnId>,
 }
 
 impl<T> StreamProgress<T> {
     /// Returns a new `FnGraphStreamProgress` with IDs of the functions to
     /// process.
-    pub fn new(value: T, fn_ids_not_processed: Vec<FnId>) -> Self {
+    pub fn new(value: T) -> Self {
         Self {
             value,
             state: StreamProgressState::NotStarted,
-            fn_ids_not_processed,
         }
     }
 
@@ -27,7 +22,6 @@ impl<T> StreamProgress<T> {
         Self {
             value,
             state: StreamProgressState::Finished,
-            fn_ids_not_processed: Vec::new(),
         }
     }
 
@@ -41,10 +35,6 @@ impl<T> StreamProgress<T> {
 
     pub fn value_mut(&mut self) -> &mut T {
         &mut self.value
-    }
-
-    pub fn fn_ids_not_processed(&self) -> &[FnId] {
-        self.fn_ids_not_processed.as_ref()
     }
 }
 

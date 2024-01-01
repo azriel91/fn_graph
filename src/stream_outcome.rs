@@ -1,4 +1,6 @@
-use crate::{FnId, StreamProgress, StreamProgressState};
+use daggy::{petgraph::visit::IntoNodeReferences, Dag};
+
+use crate::{Edge, FnId, FnIdInner, StreamProgress, StreamProgressState};
 
 /// How a `FnGraph` stream operation ended and IDs that were processed.
 ///
@@ -30,14 +32,21 @@ impl<T> StreamOutcome<T> {
     /// Returns a new `FnGraphStreamOutcome` using values from `StreamProgress`
     /// and the provided `fn_ids_processed`.
     pub fn from_progress_and_processed(
+        graph_structure: &Dag<(), Edge, FnIdInner>,
         fn_graph_stream_progress: StreamProgress<T>,
         fn_ids_processed: Vec<FnId>,
     ) -> Self {
-        let StreamProgress {
-            value,
-            state,
-            fn_ids_not_processed,
-        } = fn_graph_stream_progress;
+        let StreamProgress { value, state } = fn_graph_stream_progress;
+        let fn_ids_not_processed = graph_structure
+            .node_references()
+            .filter_map(|(fn_id, &())| {
+                if fn_ids_processed.contains(&fn_id) {
+                    None
+                } else {
+                    Some(fn_id)
+                }
+            })
+            .collect::<Vec<_>>();
 
         Self {
             value,

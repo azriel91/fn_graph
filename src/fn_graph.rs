@@ -403,8 +403,11 @@ impl<F> FnGraph<F> {
 
         let (fn_graph_stream_progress, (seed, fn_ids_processed)) =
             futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
 
         fn_graph_stream_outcome.map(|()| seed)
     }
@@ -560,8 +563,11 @@ impl<F> FnGraph<F> {
 
         let (fn_graph_stream_progress, (seed, fn_ids_processed)) =
             futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
 
         fn_graph_stream_outcome.map(|()| seed)
     }
@@ -678,8 +684,11 @@ impl<F> FnGraph<F> {
         };
 
         let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
         fn_graph_stream_outcome
     }
 
@@ -798,8 +807,11 @@ impl<F> FnGraph<F> {
         };
 
         let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
         fn_graph_stream_outcome
     }
 
@@ -974,8 +986,11 @@ impl<F> FnGraph<F> {
 
         let (fn_graph_stream_progress, (seed_result, fn_ids_processed)) =
             futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
 
         seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
     }
@@ -1151,8 +1166,11 @@ impl<F> FnGraph<F> {
 
         let (fn_graph_stream_progress, (seed_result, fn_ids_processed)) =
             futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
 
         seed_result.map(|seed| fn_graph_stream_outcome.map(|()| seed))
     }
@@ -1401,8 +1419,11 @@ impl<F> FnGraph<F> {
         };
 
         let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -1662,8 +1683,11 @@ impl<F> FnGraph<F> {
         };
 
         let (fn_graph_stream_progress, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let fn_graph_stream_outcome =
-            StreamOutcome::from_progress_and_processed(fn_graph_stream_progress, fn_ids_processed);
+        let fn_graph_stream_outcome = StreamOutcome::from_progress_and_processed(
+            &graph_structure,
+            fn_graph_stream_progress,
+            fn_ids_processed,
+        );
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -1782,16 +1806,6 @@ fn fns_no_predecessors<'f>(
     Topo::new(graph_structure)
         .iter(graph_structure)
         .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
-}
-
-/// Returns the `FnId`s of functions that have no predecessors.
-fn fns_with_predecessors<'f>(
-    graph_structure: &'f Dag<(), Edge, FnIdInner>,
-    predecessor_counts: &'f [usize],
-) -> impl Iterator<Item = FnId> + 'f {
-    Topo::new(graph_structure)
-        .iter(graph_structure)
-        .filter(|fn_id| predecessor_counts[fn_id.index()] != 0)
 }
 
 /// Preloads the `fn_ready` channel with all of the functions that have no
@@ -1942,12 +1956,7 @@ async fn fn_ready_queuer<'f>(
     #[cfg(feature = "interruptible")] interruptibility_state: InterruptibilityState<'f, '_>,
 ) -> StreamProgress<()> {
     let fns_remaining = graph_structure.node_count();
-    let mut fn_graph_stream_progress = {
-        let fn_ids_not_processed =
-            fns_with_predecessors(graph_structure, &predecessor_counts).collect::<Vec<_>>();
-
-        StreamProgress::new((), fn_ids_not_processed)
-    };
+    let mut fn_graph_stream_progress = StreamProgress::new(());
 
     let mut fn_ready_tx = Some(fn_ready_tx);
     if fns_remaining == 0 {
@@ -2060,11 +2069,7 @@ where
                     mut fn_graph_stream_progress,
                 } = queuer_stream_state_interruptible;
 
-                let StreamProgress {
-                    value: (),
-                    state,
-                    ref mut fn_ids_not_processed,
-                } = &mut fn_graph_stream_progress;
+                let StreamProgress { value: (), state } = &mut fn_graph_stream_progress;
 
                 let (fn_id, interrupted) = match poll_outcome {
                     PollOutcome::Interrupted(fn_id_opt) => (fn_id_opt, true),
@@ -2085,13 +2090,6 @@ where
                 }
 
                 if let Some(fn_id) = fn_id {
-                    if let Some(fn_id_pos) = fn_ids_not_processed
-                        .iter()
-                        .position(|fn_id_iter| fn_id == *fn_id_iter)
-                    {
-                        fn_ids_not_processed.remove(fn_id_pos);
-                    }
-
                     if !interrupted {
                         graph_structure
                             .children(fn_id)
