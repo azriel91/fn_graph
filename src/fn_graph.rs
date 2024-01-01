@@ -1268,7 +1268,7 @@ impl<F> FnGraph<F> {
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-        fns_preload_no_predecessors(graph_structure, &predecessor_counts, &fn_ready_tx);
+        fns_no_predecessors_preload(graph_structure, &predecessor_counts, &fn_ready_tx);
 
         let queuer = fn_ready_queuer(
             graph_structure,
@@ -1514,7 +1514,7 @@ impl<F> FnGraph<F> {
         let (fn_ready_tx, mut fn_ready_rx) = mpsc::channel(channel_capacity);
         let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-        fns_preload_no_predecessors(graph_structure, &predecessor_counts, &fn_ready_tx);
+        fns_no_predecessors_preload(graph_structure, &predecessor_counts, &fn_ready_tx);
 
         let queuer = fn_ready_queuer(
             graph_structure,
@@ -1675,16 +1675,34 @@ impl<F> FnGraph<F> {
     }
 }
 
+/// Returns the `FnId`s of functions that have no predecessors.
+fn fns_no_predecessors<'f>(
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    predecessor_counts: &'f [usize],
+) -> impl Iterator<Item = FnId> + 'f {
+    Topo::new(graph_structure)
+        .iter(graph_structure)
+        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+}
+
+/// Returns the `FnId`s of functions that have no predecessors.
+fn fns_with_predecessors<'f>(
+    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+    predecessor_counts: &'f [usize],
+) -> impl Iterator<Item = FnId> + 'f {
+    Topo::new(graph_structure)
+        .iter(graph_structure)
+        .filter(|fn_id| predecessor_counts[fn_id.index()] != 0)
+}
+
 /// Preloads the `fn_ready` channel with all of the functions that have no
-/// predecessors
-fn fns_preload_no_predecessors(
+/// predecessors.
+fn fns_no_predecessors_preload(
     graph_structure: &Dag<(), Edge, FnIdInner>,
     predecessor_counts: &[usize],
     fn_ready_tx: &Sender<NodeIndex<FnIdInner>>,
 ) {
-    Topo::new(graph_structure)
-        .iter(graph_structure)
-        .filter(|fn_id| predecessor_counts[fn_id.index()] == 0)
+    fns_no_predecessors(graph_structure, predecessor_counts)
         .try_for_each(|fn_id| fn_ready_tx.try_send(fn_id))
         .expect("Failed to preload function with no predecessors.");
 }
@@ -1753,7 +1771,7 @@ fn stream_setup_init<'f>(
     let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
     let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-    fns_preload_no_predecessors(graph_structure, &predecessor_counts, &fn_ready_tx);
+    fns_no_predecessors_preload(graph_structure, &predecessor_counts, &fn_ready_tx);
 
     StreamSetupInit {
         graph_structure,
@@ -1824,15 +1842,14 @@ async fn fn_ready_queuer<'f>(
     fn_ready_tx: Sender<FnId>,
     #[cfg(feature = "interruptible")] interruptibility_state: InterruptibilityState<'f, '_>,
 ) -> StreamOutcome<()> {
-    use daggy::petgraph::visit::IntoNodeReferences;
-
     let fns_remaining = graph_structure.node_count();
     let mut fn_graph_stream_progress = {
-        let fn_ids_not_processed = graph_structure
-            .node_references()
-            .map(|(fn_id, _f)| fn_id)
-            .collect::<Vec<_>>();
-        StreamProgress::new((), fn_ids_not_processed)
+        let fn_ids_processed =
+            fns_no_predecessors(graph_structure, &predecessor_counts).collect::<Vec<_>>();
+        let fn_ids_not_processed =
+            fns_with_predecessors(graph_structure, &predecessor_counts).collect::<Vec<_>>();
+
+        StreamProgress::new((), fn_ids_processed, fn_ids_not_processed)
     };
 
     let mut fn_ready_tx = Some(fn_ready_tx);
@@ -3342,13 +3359,13 @@ mod tests {
             .await
             .unwrap();
 
-            let fn_ids_processed = [5, 0, 2]
+            let fn_ids_processed = [5, 0, 2] // "f", "a", "c"
                 .into_iter()
                 .map(NodeIndex::new)
                 .collect::<Vec<NodeIndex<FnIdInner>>>();
 
             // Note: `FnId`s are in insertion order when not processed.
-            let fn_ids_not_processed = [1, 3, 4]
+            let fn_ids_not_processed = [1, 3, 4] // "b", "d", "e"
                 .into_iter()
                 .map(NodeIndex::new)
                 .collect::<Vec<NodeIndex<FnIdInner>>>();
@@ -3374,6 +3391,81 @@ mod tests {
             // interrupted, and its output is observed, but it is still considered to be not
             // processed.
             assert_eq!(["f", "a", "c", "b"], fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[cfg(feature = "interruptible")]
+        async fn try_for_each_concurrent_with_interrupt_returns_fn_ids_processed_preloaded()
+        -> Result<(), Box<dyn std::error::Error>> {
+            use interruptible::{InterruptSignal, InterruptibilityState};
+
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (interrupt_tx, interrupt_rx) = mpsc::channel::<InterruptSignal>(16);
+            interrupt_tx
+                .send(InterruptSignal)
+                .await
+                .expect("Expected `InterruptSignal` to be sent successfully.");
+            let fn_graph_stream_outcome = test_timeout(
+                Duration::from_millis(50),
+                Duration::from_millis(75),
+                fn_graph.try_for_each_concurrent_with(
+                    None,
+                    StreamOpts::new().interruptibility_state(
+                        InterruptibilityState::new_finish_current(interrupt_rx.into()),
+                    ),
+                    |f| {
+                        let fut = f.call(resources);
+                        async move {
+                            let _ = fut.await;
+                            Result::<_, TestError>::Ok(())
+                        }
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+
+            // "f" and "a" are preloaded.
+            let fn_ids_processed = [5, 0] // "f", "a"
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+
+            // Note: `FnId`s are in insertion order when not processed.
+            let fn_ids_not_processed = [1, 2, 3, 4] // "b", "c", "d", "e"
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+            assert_eq!(
+                StreamOutcome {
+                    value: (),
+                    state: StreamOutcomeState::Interrupted,
+                    fn_ids_processed,
+                    fn_ids_not_processed,
+                },
+                fn_graph_stream_outcome
+            );
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            // Note: Even though `b` is interrupted, we still see that part of its logic has
+            // run.
+            //
+            // This is significant for consumers e.g. `peace` where the a `CmdBlock` may be
+            // interrupted, and its output is observed, but it is still considered to be not
+            // processed.
+            assert_eq!(["f", "a"], fn_iter_order.as_slice());
 
             Ok(())
         }

@@ -16,11 +16,11 @@ pub struct StreamProgress<T> {
 impl<T> StreamProgress<T> {
     /// Returns a new `FnGraphStreamProgress` with IDs of the functions to
     /// process.
-    pub fn new(value: T, fn_ids_not_processed: Vec<FnId>) -> Self {
+    pub fn new(value: T, fn_ids_processed: Vec<FnId>, fn_ids_not_processed: Vec<FnId>) -> Self {
         Self {
             value,
             state: StreamProgressState::NotStarted,
-            fn_ids_processed: Vec::with_capacity(fn_ids_not_processed.len()),
+            fn_ids_processed,
             fn_ids_not_processed,
         }
     }
