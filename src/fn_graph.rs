@@ -1304,41 +1304,27 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&'f F) -> Fut,
         Fut: Future<Output = Result<(), E>> + 'f,
     {
-        let StreamOpts {
-            stream_order,
-            #[cfg(feature = "interruptible")]
-            interruptibility_state,
-            marker: _,
-        } = opts;
+        let FnGraph {
+            graph: _,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        let (graph_structure, predecessor_counts) = match stream_order {
-            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            StreamOrder::Reverse => (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            ),
-        };
+        let StreamSetupInitConcurrent {
+            graph_structure,
+            fn_ready_rx,
+            queuer,
+            fn_done_tx,
+            fns_remaining,
+        } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
+
         let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (result_tx, mut result_rx) = mpsc::channel(channel_capacity);
-        let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-        fns_no_predecessors_preload(graph_structure, &predecessor_counts, &fn_ready_tx);
-
-        let queuer = fn_ready_queuer(
-            graph_structure,
-            predecessor_counts,
-            fn_done_rx,
-            fn_ready_tx,
-            #[cfg(feature = "interruptible")]
-            interruptibility_state,
-        );
-
-        let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
         let fn_try_for_each = &fn_try_for_each;
-        let fns_remaining = graph_structure.node_count();
-        let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
         let fn_refs = &self.graph;
 
@@ -1559,41 +1545,27 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        let StreamOpts {
-            stream_order,
-            #[cfg(feature = "interruptible")]
-            interruptibility_state,
-            marker: _,
-        } = opts;
+        let FnGraph {
+            graph: _,
+            ref graph_structure,
+            ref graph_structure_rev,
+            ranks: _,
+            ref edge_counts,
+        } = self;
 
-        let (graph_structure, predecessor_counts) = match stream_order {
-            StreamOrder::Forward => (&self.graph_structure, self.edge_counts.incoming().to_vec()),
-            StreamOrder::Reverse => (
-                &self.graph_structure_rev,
-                self.edge_counts.outgoing().to_vec(),
-            ),
-        };
+        let StreamSetupInitConcurrent {
+            graph_structure,
+            fn_ready_rx,
+            queuer,
+            fn_done_tx,
+            fns_remaining,
+        } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, opts);
+
         let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (result_tx, mut result_rx) = mpsc::channel(channel_capacity);
-        let (fn_ready_tx, fn_ready_rx) = mpsc::channel(channel_capacity);
-        let (fn_done_tx, fn_done_rx) = mpsc::channel::<FnId>(channel_capacity);
 
-        fns_no_predecessors_preload(graph_structure, &predecessor_counts, &fn_ready_tx);
-
-        let queuer = fn_ready_queuer(
-            graph_structure,
-            predecessor_counts,
-            fn_done_rx,
-            fn_ready_tx,
-            #[cfg(feature = "interruptible")]
-            interruptibility_state,
-        );
-
-        let fn_done_tx = RwLock::new(Some(fn_done_tx));
         let fn_done_tx = &fn_done_tx;
         let fn_try_for_each = &fn_try_for_each;
-        let fns_remaining = graph_structure.node_count();
-        let fns_remaining = RwLock::new(fns_remaining);
         let fns_remaining = &fns_remaining;
         let fn_mut_refs = self
             .graph
