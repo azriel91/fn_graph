@@ -1,6 +1,6 @@
 use daggy::{petgraph::visit::IntoNodeReferences, Dag};
 
-use crate::{Edge, FnId, FnIdInner, StreamProgressState};
+use crate::{Edge, FnId, FnIdInner};
 
 /// How a `FnGraph` stream operation ended and IDs that were processed.
 ///
@@ -34,7 +34,7 @@ impl<T> StreamOutcome<T> {
     pub fn new(
         graph_structure: &Dag<(), Edge, FnIdInner>,
         value: T,
-        stream_progress_state: StreamProgressState,
+        stream_outcome_state: StreamOutcomeState,
         fn_ids_processed: Vec<FnId>,
     ) -> Self {
         let fn_ids_not_processed = graph_structure
@@ -50,7 +50,7 @@ impl<T> StreamOutcome<T> {
 
         Self {
             value,
-            state: stream_progress_state.into(),
+            state: stream_outcome_state,
             fn_ids_processed,
             fn_ids_not_processed,
         }
@@ -173,16 +173,6 @@ pub enum StreamOutcomeState {
     /// The stream was not interrupted and finished, so all items were
     /// processed.
     Finished,
-}
-
-impl From<StreamProgressState> for StreamOutcomeState {
-    fn from(stream_progress_state_state: StreamProgressState) -> Self {
-        match stream_progress_state_state {
-            StreamProgressState::NotStarted => Self::NotStarted,
-            StreamProgressState::InProgress => Self::Interrupted,
-            StreamProgressState::Finished => Self::Finished,
-        }
-    }
 }
 
 #[cfg(test)]

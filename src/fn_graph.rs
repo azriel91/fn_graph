@@ -30,7 +30,7 @@ use tokio::sync::{
 #[cfg(feature = "async")]
 use crate::{
     EdgeCounts, FnRef, FnWrapper, FnWrapperMut, StreamOpts, StreamOrder, StreamOutcome,
-    StreamOutcomeState, StreamProgressState,
+    StreamOutcomeState,
 };
 #[cfg(all(feature = "async", feature = "interruptible"))]
 use interruptible::{InterruptibilityState, InterruptibleStreamExt, PollOutcome};
@@ -378,9 +378,10 @@ impl<F> FnGraph<F> {
 
                         // Close `fn_done_rx` when all functions have been executed,
                         fns_remaining -= 1;
-                        if fns_remaining == 0 {
-                            fn_done_tx.take();
-                        }
+                    }
+
+                    if fns_remaining == 0 {
+                        fn_done_tx.take();
                     }
 
                     #[cfg(feature = "interruptible")]
@@ -401,24 +402,24 @@ impl<F> FnGraph<F> {
 
             let FoldStreamState {
                 graph: _,
-                fns_remaining: _,
+                fns_remaining,
                 fn_done_tx: _,
                 seed,
                 fn_fold: _,
             } = fold_stream_state;
 
-            (seed, fn_ids_processed)
+            let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
+            StreamOutcome::new(
+                &graph_structure,
+                seed,
+                stream_outcome_state,
+                fn_ids_processed,
+            )
         };
 
-        let (stream_progress_state, (seed, fn_ids_processed)) = futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), stream_outcome) = futures::join!(queuer, scheduler);
 
-        stream_outcome.map(|()| seed)
+        stream_outcome
     }
 
     /// Returns a stream of function references in topological order.
@@ -549,9 +550,10 @@ impl<F> FnGraph<F> {
 
                         // Close `fn_done_rx` when all functions have been executed,
                         fns_remaining -= 1;
-                        if fns_remaining == 0 {
-                            fn_done_tx.take();
-                        }
+                    }
+
+                    if fns_remaining == 0 {
+                        fn_done_tx.take();
                     }
 
                     #[cfg(feature = "interruptible")]
@@ -572,24 +574,24 @@ impl<F> FnGraph<F> {
 
             let FoldStreamStateMut {
                 graph: _,
-                fns_remaining: _,
+                fns_remaining,
                 fn_done_tx: _,
                 seed,
                 fn_fold: _,
             } = fold_stream_state;
 
-            (seed, fn_ids_processed)
+            let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
+            StreamOutcome::new(
+                &graph_structure,
+                seed,
+                stream_outcome_state,
+                fn_ids_processed,
+            )
         };
 
-        let (stream_progress_state, (seed, fn_ids_processed)) = futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), stream_outcome) = futures::join!(queuer, scheduler);
 
-        stream_outcome.map(|()| seed)
+        stream_outcome
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -706,25 +708,21 @@ impl<F> FnGraph<F> {
                         let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
                         fn_for_each(r#fn).await;
                         fn_done_send_locked(fn_done_tx, fn_id).await;
+                        fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     }
 
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     #[cfg(feature = "interruptible")]
                     fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
             )
             .await;
 
-            fn_ids_processed
+            let stream_outcome_state =
+                stream_outcome_state_after_stream(*fns_remaining.read().await);
+            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed)
         };
 
-        let (stream_progress_state, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), stream_outcome) = futures::join!(queuer, scheduler);
         stream_outcome
     }
 
@@ -845,9 +843,9 @@ impl<F> FnGraph<F> {
                             .expect("Expected to borrow fn mutably.");
                         fn_for_each(&mut r#fn).await;
                         fn_done_send_locked(fn_done_tx, fn_id).await;
+                        fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     }
 
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     #[cfg(feature = "interruptible")]
                     fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
@@ -857,13 +855,10 @@ impl<F> FnGraph<F> {
             fn_ids_processed
         };
 
-        let (stream_progress_state, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), fn_ids_processed) = futures::join!(queuer, scheduler);
+        let stream_outcome_state = stream_outcome_state_after_stream(*fns_remaining.read().await);
+        let stream_outcome =
+            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed);
         stream_outcome
     }
 
@@ -1010,9 +1005,9 @@ impl<F> FnGraph<F> {
 
                         // Close `fn_done_rx` when all functions have been executed,
                         fns_remaining -= 1;
-                        if fns_remaining == 0 {
-                            fn_done_tx.take();
-                        }
+                    }
+                    if fns_remaining == 0 {
+                        fn_done_tx.take();
                     }
 
                     #[cfg(feature = "interruptible")]
@@ -1035,28 +1030,29 @@ impl<F> FnGraph<F> {
             .map(|fold_stream_state| {
                 let FoldStreamState {
                     graph: _,
-                    fns_remaining: _,
+                    fns_remaining,
                     fn_done_tx: _,
                     seed,
                     fn_fold: _,
                 } = fold_stream_state;
 
-                seed
+                (seed, fns_remaining)
             });
 
-            (seed_result, fn_ids_processed)
+            seed_result.map(|(seed, fns_remaining)| {
+                let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
+                StreamOutcome::new(
+                    &graph_structure,
+                    seed,
+                    stream_outcome_state,
+                    fn_ids_processed,
+                )
+            })
         };
 
-        let (stream_progress_state, (seed_result, fn_ids_processed)) =
-            futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), stream_outcome) = futures::join!(queuer, scheduler);
 
-        seed_result.map(|seed| stream_outcome.map(|()| seed))
+        stream_outcome
     }
 
     /// Returns a stream of function references in topological order.
@@ -1203,9 +1199,10 @@ impl<F> FnGraph<F> {
 
                         // Close `fn_done_rx` when all functions have been executed,
                         fns_remaining -= 1;
-                        if fns_remaining == 0 {
-                            fn_done_tx.take();
-                        }
+                    }
+
+                    if fns_remaining == 0 {
+                        fn_done_tx.take();
                     }
 
                     #[cfg(feature = "interruptible")]
@@ -1228,27 +1225,29 @@ impl<F> FnGraph<F> {
             .map(|fold_stream_state| {
                 let FoldStreamStateMut {
                     graph: _,
-                    fns_remaining: _,
+                    fns_remaining,
                     fn_done_tx: _,
                     seed,
                     fn_fold: _,
                 } = fold_stream_state;
 
-                seed
+                (seed, fns_remaining)
             });
-            (seed_result, fn_ids_processed)
+
+            seed_result.map(|(seed, fns_remaining)| {
+                let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
+                StreamOutcome::new(
+                    &graph_structure,
+                    seed,
+                    stream_outcome_state,
+                    fn_ids_processed,
+                )
+            })
         };
 
-        let (stream_progress_state, (seed_result, fn_ids_processed)) =
-            futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), stream_outcome) = futures::join!(queuer, scheduler);
 
-        seed_result.map(|seed| stream_outcome.map(|()| seed))
+        stream_outcome
     }
 
     /// Runs the provided logic over the functions concurrently in topological
@@ -1481,9 +1480,9 @@ impl<F> FnGraph<F> {
                         };
 
                         fn_done_send_locked(fn_done_tx, fn_id).await;
+                        fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     }
 
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     #[cfg(feature = "interruptible")]
                     fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
@@ -1495,13 +1494,10 @@ impl<F> FnGraph<F> {
             fn_ids_processed
         };
 
-        let (stream_progress_state, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), fn_ids_processed) = futures::join!(queuer, scheduler);
+        let stream_outcome_state = stream_outcome_state_after_stream(*fns_remaining.read().await);
+        let stream_outcome =
+            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -1747,9 +1743,9 @@ impl<F> FnGraph<F> {
                         };
 
                         fn_done_send_locked(fn_done_tx, fn_id).await;
+                        fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     }
 
-                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
                     #[cfg(feature = "interruptible")]
                     fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
@@ -1761,13 +1757,10 @@ impl<F> FnGraph<F> {
             fn_ids_processed
         };
 
-        let (stream_progress_state, fn_ids_processed) = futures::join!(queuer, scheduler);
-        let stream_outcome = StreamOutcome::new(
-            &graph_structure,
-            (),
-            stream_progress_state,
-            fn_ids_processed,
-        );
+        let ((), fn_ids_processed) = futures::join!(queuer, scheduler);
+        let stream_outcome_state = stream_outcome_state_after_stream(*fns_remaining.read().await);
+        let stream_outcome =
+            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -1875,6 +1868,19 @@ impl<F> FnGraph<F> {
     pub fn iter_insertion_with_indices(&self) -> NodeReferences<F, FnIdInner> {
         use daggy::petgraph::visit::IntoNodeReferences;
         self.graph.node_references()
+    }
+}
+
+/// Returns the correct `StreamOutcomeState` after a stream operation has
+/// completed.
+///
+/// We explicitly set it to `Finished` *after* the stream code has been called.
+///
+/// This will correctly preseve the `NotStarted` value for empty graphs.
+fn stream_outcome_state_after_stream(fns_remaining: usize) -> StreamOutcomeState {
+    match fns_remaining {
+        0 => StreamOutcomeState::Finished,
+        _ => StreamOutcomeState::Interrupted,
     }
 }
 
@@ -1993,7 +1999,7 @@ fn stream_setup_init_concurrent<'f>(
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
     opts: &StreamOpts<'f, 'f>,
-) -> StreamSetupInitConcurrent<'f, impl Future<Output = StreamProgressState> + 'f> {
+) -> StreamSetupInitConcurrent<'f, impl Future<Output = ()> + 'f> {
     let StreamOpts {
         stream_order,
         #[cfg(feature = "interruptible")]
@@ -2037,24 +2043,17 @@ async fn fn_ready_queuer<'f>(
     predecessor_counts: Vec<usize>,
     mut fn_done_rx: Receiver<FnId>,
     fn_ready_tx: Sender<FnId>,
-) -> StreamProgressState {
+) {
     let fns_remaining = graph_structure.node_count();
-    let mut stream_progress_state = StreamProgressState::NotStarted;
-
     let mut fn_ready_tx = Some(fn_ready_tx);
     if fns_remaining == 0 {
-        stream_progress_state = StreamProgressState::Finished;
         fn_ready_tx.take();
     }
     let stream = stream::poll_fn(move |context| fn_done_rx.poll_recv(context));
 
-    let queuer_stream_state = QueuerStreamState::new(
-        fns_remaining,
-        predecessor_counts,
-        fn_ready_tx,
-        stream_progress_state,
-    );
-    queuer_stream_fold(stream, queuer_stream_state, graph_structure).await
+    let queuer_stream_state =
+        QueuerStreamState::new(fns_remaining, predecessor_counts, fn_ready_tx);
+    queuer_stream_fold(stream, queuer_stream_state, graph_structure).await;
 }
 
 /// Polls the queuer stream until completed.
@@ -2063,8 +2062,8 @@ async fn queuer_stream_fold(
     stream: impl Stream<Item = NodeIndex<FnIdInner>>,
     queuer_stream_state: QueuerStreamState,
     graph_structure: &Dag<(), Edge, FnIdInner>,
-) -> StreamProgressState {
-    let queuer_stream_state = stream
+) {
+    stream
         .fold(
             queuer_stream_state,
             move |queuer_stream_state, fn_id| async move {
@@ -2072,17 +2071,13 @@ async fn queuer_stream_fold(
                     mut fns_remaining,
                     mut predecessor_counts,
                     mut fn_ready_tx,
-                    stream_progress_state: _,
                 } = queuer_stream_state;
 
                 // Close `fn_ready_rx` when all functions have been executed,
                 fns_remaining -= 1;
-                let stream_progress_state = if fns_remaining == 0 {
+                if fns_remaining == 0 {
                     fn_ready_tx.take();
-                    StreamProgressState::Finished
-                } else {
-                    StreamProgressState::InProgress
-                };
+                }
 
                 graph_structure
                     .children(fn_id)
@@ -2109,18 +2104,10 @@ async fn queuer_stream_fold(
                     fns_remaining,
                     predecessor_counts,
                     fn_ready_tx,
-                    stream_progress_state,
                 }
             },
         )
         .await;
-
-    let QueuerStreamState {
-        stream_progress_state,
-        ..
-    } = queuer_stream_state;
-
-    stream_progress_state
 }
 
 #[cfg(all(feature = "async", not(feature = "interruptible")))]
@@ -2210,8 +2197,6 @@ struct QueuerStreamState {
     predecessor_counts: Vec<usize>,
     /// Channel sender for function IDs that are ready to run.
     fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
-    /// State during processing a `FnGraph` stream.
-    stream_progress_state: StreamProgressState,
 }
 
 #[cfg(feature = "async")]
@@ -2220,13 +2205,11 @@ impl QueuerStreamState {
         fns_remaining: usize,
         predecessor_counts: Vec<usize>,
         fn_ready_tx: Option<Sender<NodeIndex<FnIdInner>>>,
-        stream_progress_state: StreamProgressState,
     ) -> Self {
         Self {
             fns_remaining,
             predecessor_counts,
             fn_ready_tx,
-            stream_progress_state,
         }
     }
 }
