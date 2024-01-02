@@ -1870,6 +1870,7 @@ impl<F> FnGraph<F> {
 /// We explicitly set it to `Finished` *after* the stream code has been called.
 ///
 /// This will correctly preseve the `NotStarted` value for empty graphs.
+#[cfg(feature = "async")]
 fn stream_outcome_state_after_stream(fns_remaining: usize) -> StreamOutcomeState {
     match fns_remaining {
         0 => StreamOutcomeState::Finished,
@@ -1878,6 +1879,7 @@ fn stream_outcome_state_after_stream(fns_remaining: usize) -> StreamOutcomeState
 }
 
 /// Returns the `FnId`s of functions that have no predecessors.
+#[cfg(feature = "async")]
 fn fns_no_predecessors<'f>(
     graph_structure: &'f Dag<(), Edge, FnIdInner>,
     predecessor_counts: &'f [usize],
@@ -1889,6 +1891,7 @@ fn fns_no_predecessors<'f>(
 
 /// Preloads the `fn_ready` channel with all of the functions that have no
 /// predecessors.
+#[cfg(feature = "async")]
 fn fns_no_predecessors_preload(
     graph_structure: &Dag<(), Edge, FnIdInner>,
     predecessor_counts: &[usize],
