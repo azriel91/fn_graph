@@ -1,4 +1,6 @@
-use crate::{FnId, StreamProgress, StreamProgressState};
+use daggy::{petgraph::visit::IntoNodeReferences, Dag};
+
+use crate::{Edge, FnId, FnIdInner};
 
 /// How a `FnGraph` stream operation ended and IDs that were processed.
 ///
@@ -24,6 +26,33 @@ impl<T> StreamOutcome<T> {
             state: StreamOutcomeState::Finished,
             fn_ids_processed,
             fn_ids_not_processed: Vec::new(),
+        }
+    }
+
+    /// Returns a new `FnGraphStreamOutcome` using values from `StreamProgress`
+    /// and the provided `fn_ids_processed`.
+    pub fn new(
+        graph_structure: &Dag<(), Edge, FnIdInner>,
+        value: T,
+        stream_outcome_state: StreamOutcomeState,
+        fn_ids_processed: Vec<FnId>,
+    ) -> Self {
+        let fn_ids_not_processed = graph_structure
+            .node_references()
+            .filter_map(|(fn_id, &())| {
+                if fn_ids_processed.contains(&fn_id) {
+                    None
+                } else {
+                    Some(fn_id)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Self {
+            value,
+            state: stream_outcome_state,
+            fn_ids_processed,
+            fn_ids_not_processed,
         }
     }
 
@@ -128,24 +157,6 @@ where
     }
 }
 
-impl<T> From<StreamProgress<T>> for StreamOutcome<T> {
-    fn from(fn_graph_stream_progress: StreamProgress<T>) -> Self {
-        let StreamProgress {
-            value,
-            state,
-            fn_ids_processed,
-            fn_ids_not_processed,
-        } = fn_graph_stream_progress;
-
-        Self {
-            value,
-            state: state.into(),
-            fn_ids_processed,
-            fn_ids_not_processed,
-        }
-    }
-}
-
 /// How a `FnGraph` stream operation ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamOutcomeState {
@@ -162,16 +173,6 @@ pub enum StreamOutcomeState {
     /// The stream was not interrupted and finished, so all items were
     /// processed.
     Finished,
-}
-
-impl From<StreamProgressState> for StreamOutcomeState {
-    fn from(fn_graph_stream_progress_state: StreamProgressState) -> Self {
-        match fn_graph_stream_progress_state {
-            StreamProgressState::NotStarted => Self::NotStarted,
-            StreamProgressState::InProgress => Self::Interrupted,
-            StreamProgressState::Finished => Self::Finished,
-        }
-    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,11 @@
 # Changelog
 
+## unreleased
+
+* Fix `StreamOutcome` `fn_ids_processed` and `fn_ids_not_processed` values.
+* Remove `StreamProgress` and `StreamProgressState`.
+
+
 ## 0.10.0 (2023-12-28)
 
 * Replace `StreamProgress::{empty, with_capacity}` with `StreamProgress::new`.

@@ -143,12 +143,7 @@ mod stream_opts;
 mod stream_order;
 
 #[cfg(feature = "async")]
-pub use crate::{
-    stream_outcome::{StreamOutcome, StreamOutcomeState},
-    stream_progress::{StreamProgress, StreamProgressState},
-};
+pub use crate::stream_outcome::{StreamOutcome, StreamOutcomeState};
 
 #[cfg(feature = "async")]
 mod stream_outcome;
-#[cfg(feature = "async")]
-mod stream_progress;
