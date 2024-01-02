@@ -1946,9 +1946,7 @@ async fn fn_ready_queuer<'f>(
 /// Polls the queuer stream until completed.
 #[cfg(all(feature = "async", not(feature = "interruptible")))]
 async fn queuer_stream_fold(
-    stream: stream::PollFn<
-        impl FnMut(&mut std::task::Context) -> Poll<Option<NodeIndex<FnIdInner>>>,
-    >,
+    stream: impl Stream<Item = NodeIndex<FnIdInner>>,
     queuer_stream_state: QueuerStreamState,
     graph_structure: &Dag<(), Edge, FnIdInner>,
 ) -> StreamProgressState {
