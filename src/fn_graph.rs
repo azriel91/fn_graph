@@ -403,7 +403,7 @@ impl<F> FnGraph<F> {
 
             let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
             StreamOutcome::new(
-                &graph_structure,
+                graph_structure,
                 seed,
                 stream_outcome_state,
                 fn_ids_processed,
@@ -575,7 +575,7 @@ impl<F> FnGraph<F> {
 
             let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
             StreamOutcome::new(
-                &graph_structure,
+                graph_structure,
                 seed,
                 stream_outcome_state,
                 fn_ids_processed,
@@ -712,7 +712,7 @@ impl<F> FnGraph<F> {
 
             let stream_outcome_state =
                 stream_outcome_state_after_stream(*fns_remaining.read().await);
-            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed)
+            StreamOutcome::new(graph_structure, (), stream_outcome_state, fn_ids_processed)
         };
 
         let ((), stream_outcome) = futures::join!(queuer, scheduler);
@@ -850,9 +850,8 @@ impl<F> FnGraph<F> {
 
         let ((), fn_ids_processed) = futures::join!(queuer, scheduler);
         let stream_outcome_state = stream_outcome_state_after_stream(*fns_remaining.read().await);
-        let stream_outcome =
-            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed);
-        stream_outcome
+
+        StreamOutcome::new(graph_structure, (), stream_outcome_state, fn_ids_processed)
     }
 
     /// Returns a stream of function references in topological order.
@@ -1035,7 +1034,7 @@ impl<F> FnGraph<F> {
             seed_result.map(|(seed, fns_remaining)| {
                 let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
                 StreamOutcome::new(
-                    &graph_structure,
+                    graph_structure,
                     seed,
                     stream_outcome_state,
                     fn_ids_processed,
@@ -1230,7 +1229,7 @@ impl<F> FnGraph<F> {
             seed_result.map(|(seed, fns_remaining)| {
                 let stream_outcome_state = stream_outcome_state_after_stream(fns_remaining);
                 StreamOutcome::new(
-                    &graph_structure,
+                    graph_structure,
                     seed,
                     stream_outcome_state,
                     fn_ids_processed,
@@ -1490,7 +1489,7 @@ impl<F> FnGraph<F> {
         let ((), fn_ids_processed) = futures::join!(queuer, scheduler);
         let stream_outcome_state = stream_outcome_state_after_stream(*fns_remaining.read().await);
         let stream_outcome =
-            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed);
+            StreamOutcome::new(graph_structure, (), stream_outcome_state, fn_ids_processed);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -1753,7 +1752,7 @@ impl<F> FnGraph<F> {
         let ((), fn_ids_processed) = futures::join!(queuer, scheduler);
         let stream_outcome_state = stream_outcome_state_after_stream(*fns_remaining.read().await);
         let stream_outcome =
-            StreamOutcome::new(&graph_structure, (), stream_outcome_state, fn_ids_processed);
+            StreamOutcome::new(graph_structure, (), stream_outcome_state, fn_ids_processed);
 
         let results = stream::poll_fn(move |ctx| result_rx.poll_recv(ctx))
             .collect::<Vec<E>>()
@@ -2034,8 +2033,8 @@ fn stream_setup_init_concurrent<'f>(
 /// Sends IDs of function whose predecessors have been executed to
 /// `fn_ready_tx`.
 #[cfg(feature = "async")]
-async fn fn_ready_queuer<'f>(
-    graph_structure: &'f Dag<(), Edge, FnIdInner>,
+async fn fn_ready_queuer(
+    graph_structure: &Dag<(), Edge, FnIdInner>,
     predecessor_counts: Vec<usize>,
     mut fn_done_rx: Receiver<FnId>,
     fn_ready_tx: Sender<FnId>,
