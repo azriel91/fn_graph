@@ -1868,7 +1868,7 @@ impl<F> FnGraph<F> {
 ///
 /// We explicitly set it to `Finished` *after* the stream code has been called.
 ///
-/// This will correctly preseve the `NotStarted` value for empty graphs.
+/// This will correctly preserve the `NotStarted` value for empty graphs.
 #[cfg(feature = "async")]
 fn stream_outcome_state_after_stream(fns_remaining: usize) -> StreamOutcomeState {
     match fns_remaining {
