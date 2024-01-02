@@ -352,26 +352,37 @@ impl<F> FnGraph<F> {
                 fold_stream_state,
                 |fold_stream_state,
                  #[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    };
+
                     let FoldStreamState {
                         graph,
                         mut fns_remaining,
                         mut fn_done_tx,
-                        seed,
+                        mut seed,
                         fn_fold,
                     } = fold_stream_state;
 
-                    let r#fn = &graph[fn_id];
-                    let seed = fn_fold(seed, FnWrapper::new(r#fn)).await;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
+                    if let Some(fn_id) = fn_id {
+                        let r#fn = &graph[fn_id];
+                        seed = fn_fold(seed, FnWrapper::new(r#fn)).await;
+                        if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                            fn_done_send(fn_done_tx, fn_id).await;
+                        }
+
+                        // Close `fn_done_rx` when all functions have been executed,
+                        fns_remaining -= 1;
+                        if fns_remaining == 0 {
+                            fn_done_tx.take();
+                        }
                     }
 
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
                     #[cfg(feature = "interruptible")]
                     if interrupted {
                         fn_done_tx.take();
@@ -512,26 +523,37 @@ impl<F> FnGraph<F> {
                 fold_stream_state,
                 |fold_stream_state,
                  #[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    };
+
                     let FoldStreamStateMut {
                         graph,
                         mut fns_remaining,
                         mut fn_done_tx,
-                        seed,
+                        mut seed,
                         mut fn_fold,
                     } = fold_stream_state;
 
-                    let r#fn = &mut graph[fn_id];
-                    let seed = fn_fold(seed, FnWrapperMut::new(r#fn)).await;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
+                    if let Some(fn_id) = fn_id {
+                        let r#fn = &mut graph[fn_id];
+                        seed = fn_fold(seed, FnWrapperMut::new(r#fn)).await;
+                        if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                            fn_done_send(fn_done_tx, fn_id).await;
+                        }
+
+                        // Close `fn_done_rx` when all functions have been executed,
+                        fns_remaining -= 1;
+                        if fns_remaining == 0 {
+                            fn_done_tx.take();
+                        }
                     }
 
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
                     #[cfg(feature = "interruptible")]
                     if interrupted {
                         fn_done_tx.take();
@@ -671,17 +693,24 @@ impl<F> FnGraph<F> {
             .for_each_concurrent(
                 limit,
                 |#[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
-                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
-                    fn_for_each(r#fn).await;
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(
-                        fns_remaining,
-                        fn_done_tx,
-                        #[cfg(feature = "interruptible")]
-                        interrupted,
-                    )
-                    .await;
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    };
+
+                    if let Some(fn_id) = fn_id {
+                        let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                        fn_for_each(r#fn).await;
+                        fn_done_send_locked(fn_done_tx, fn_id).await;
+                    }
+
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+                    #[cfg(feature = "interruptible")]
+                    fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
             )
             .await;
@@ -801,19 +830,26 @@ impl<F> FnGraph<F> {
             .for_each_concurrent(
                 limit,
                 |#[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
-                    let mut r#fn = fn_mut_refs[fn_id.index()]
-                        .try_write()
-                        .expect("Expected to borrow fn mutably.");
-                    fn_for_each(&mut r#fn).await;
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(
-                        fns_remaining,
-                        fn_done_tx,
-                        #[cfg(feature = "interruptible")]
-                        interrupted,
-                    )
-                    .await;
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    };
+
+                    if let Some(fn_id) = fn_id {
+                        let mut r#fn = fn_mut_refs[fn_id.index()]
+                            .try_write()
+                            .expect("Expected to borrow fn mutably.");
+                        fn_for_each(&mut r#fn).await;
+                        fn_done_send_locked(fn_done_tx, fn_id).await;
+                    }
+
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+                    #[cfg(feature = "interruptible")]
+                    fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
             )
             .await;
@@ -948,26 +984,37 @@ impl<F> FnGraph<F> {
                 fold_stream_state,
                 |fold_stream_state,
                  #[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    };
+
                     let FoldStreamState {
                         graph,
                         mut fns_remaining,
                         mut fn_done_tx,
-                        seed,
+                        mut seed,
                         fn_fold: fn_try_fold,
                     } = fold_stream_state;
 
-                    let r#fn = &graph[fn_id];
-                    let seed = fn_try_fold(seed, FnWrapper::new(r#fn)).await?;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
+                    if let Some(fn_id) = fn_id {
+                        let r#fn = &graph[fn_id];
+                        seed = fn_try_fold(seed, FnWrapper::new(r#fn)).await?;
+                        if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                            fn_done_send(fn_done_tx, fn_id).await;
+                        }
+
+                        // Close `fn_done_rx` when all functions have been executed,
+                        fns_remaining -= 1;
+                        if fns_remaining == 0 {
+                            fn_done_tx.take();
+                        }
                     }
 
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
                     #[cfg(feature = "interruptible")]
                     if interrupted {
                         fn_done_tx.take();
@@ -1130,26 +1177,37 @@ impl<F> FnGraph<F> {
                 fold_stream_state,
                 |fold_stream_state,
                  #[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+                    };
+
                     let FoldStreamStateMut {
                         graph,
                         mut fns_remaining,
                         mut fn_done_tx,
-                        seed,
+                        mut seed,
                         fn_fold: mut fn_try_fold,
                     } = fold_stream_state;
 
-                    let r#fn = &mut graph[fn_id];
-                    let seed = fn_try_fold(seed, FnWrapperMut::new(r#fn)).await?;
-                    if let Some(fn_done_tx) = fn_done_tx.as_ref() {
-                        fn_done_send(fn_done_tx, fn_id).await;
+                    if let Some(fn_id) = fn_id {
+                        let r#fn = &mut graph[fn_id];
+                        seed = fn_try_fold(seed, FnWrapperMut::new(r#fn)).await?;
+                        if let Some(fn_done_tx) = fn_done_tx.as_ref() {
+                            fn_done_send(fn_done_tx, fn_id).await;
+                        }
+
+                        // Close `fn_done_rx` when all functions have been executed,
+                        fns_remaining -= 1;
+                        if fns_remaining == 0 {
+                            fn_done_tx.take();
+                        }
                     }
 
-                    // Close `fn_done_rx` when all functions have been executed,
-                    fns_remaining -= 1;
-                    if fns_remaining == 0 {
-                        fn_done_tx.take();
-                    }
                     #[cfg(feature = "interruptible")]
                     if interrupted {
                         fn_done_tx.take();
@@ -1400,27 +1458,34 @@ impl<F> FnGraph<F> {
             .for_each_concurrent(
                 limit,
                 |#[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
-                    let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
-                    if let Err(e) = fn_try_for_each(r#fn).await {
-                        result_tx_ref
-                            .send(e)
-                            .await
-                            .expect("Scheduler failed to send Err result in `result_tx`.");
-
-                        // Close `fn_done_rx`, which means `fn_ready_queuer` should return
-                        // `Poll::Ready(None)`.
-                        fn_done_tx.write().await.take();
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
                     };
 
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(
-                        fns_remaining,
-                        fn_done_tx,
-                        #[cfg(feature = "interruptible")]
-                        interrupted,
-                    )
-                    .await;
+                    if let Some(fn_id) = fn_id {
+                        let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
+                        if let Err(e) = fn_try_for_each(r#fn).await {
+                            result_tx_ref
+                                .send(e)
+                                .await
+                                .expect("Scheduler failed to send Err result in `result_tx`.");
+
+                            // Close `fn_done_rx`, which means `fn_ready_queuer` should return
+                            // `Poll::Ready(None)`.
+                            fn_done_tx.write().await.take();
+                        };
+
+                        fn_done_send_locked(fn_done_tx, fn_id).await;
+                    }
+
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+                    #[cfg(feature = "interruptible")]
+                    fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
             )
             .await;
@@ -1657,29 +1722,36 @@ impl<F> FnGraph<F> {
             .for_each_concurrent(
                 limit,
                 |#[cfg(not(feature = "interruptible"))] fn_id,
-                 #[cfg(feature = "interruptible")] (fn_id, interrupted)| async move {
-                    let mut r#fn = fn_mut_refs[fn_id.index()]
-                        .try_write()
-                        .expect("Expected to borrow fn mutably.");
-                    if let Err(e) = fn_try_for_each(&mut r#fn).await {
-                        result_tx_ref
-                            .send(e)
-                            .await
-                            .expect("Scheduler failed to send Err result in `result_tx`.");
-
-                        // Close `fn_done_rx`, which means `fn_ready_queuer` should return
-                        // `Poll::Ready(None)`.
-                        fn_done_tx.write().await.take();
+                 #[cfg(feature = "interruptible")] fn_id_poll_outcome| async move {
+                    #[cfg(not(feature = "interruptible"))]
+                    let fn_id = Some(fn_id);
+                    #[cfg(feature = "interruptible")]
+                    let (fn_id, interrupted) = match fn_id_poll_outcome {
+                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
                     };
 
-                    fn_done_send_locked(fn_done_tx, fn_id).await;
-                    fns_remaining_decrement(
-                        fns_remaining,
-                        fn_done_tx,
-                        #[cfg(feature = "interruptible")]
-                        interrupted,
-                    )
-                    .await;
+                    if let Some(fn_id) = fn_id {
+                        let mut r#fn = fn_mut_refs[fn_id.index()]
+                            .try_write()
+                            .expect("Expected to borrow fn mutably.");
+                        if let Err(e) = fn_try_for_each(&mut r#fn).await {
+                            result_tx_ref
+                                .send(e)
+                                .await
+                                .expect("Scheduler failed to send Err result in `result_tx`.");
+
+                            // Close `fn_done_rx`, which means `fn_ready_queuer` should return
+                            // `Poll::Ready(None)`.
+                            fn_done_tx.write().await.take();
+                        };
+
+                        fn_done_send_locked(fn_done_tx, fn_id).await;
+                    }
+
+                    fns_remaining_decrement(fns_remaining, fn_done_tx).await;
+                    #[cfg(feature = "interruptible")]
+                    fn_done_tx_drop_if_interrupted(fn_done_tx, interrupted).await;
                 },
             )
             .await;
@@ -1863,7 +1935,6 @@ async fn fn_done_send(fn_done_tx: &Sender<NodeIndex<FnIdInner>>, fn_id: NodeInde
 async fn fns_remaining_decrement(
     fns_remaining: &RwLock<usize>,
     fn_done_tx: &RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
-    #[cfg(feature = "interruptible")] interrupted: bool,
 ) {
     let fns_remaining_val = {
         let mut fns_remaining_ref = fns_remaining.write().await;
@@ -1873,7 +1944,14 @@ async fn fns_remaining_decrement(
     if fns_remaining_val == 0 {
         fn_done_tx.write().await.take();
     }
-    #[cfg(feature = "interruptible")]
+}
+
+/// Drops `fn_done_tx` if interrupted.
+#[cfg(all(feature = "async", feature = "interruptible"))]
+async fn fn_done_tx_drop_if_interrupted(
+    fn_done_tx: &RwLock<Option<Sender<NodeIndex<FnIdInner>>>>,
+    interrupted: bool,
+) {
     if interrupted {
         fn_done_tx.write().await.take();
     }
@@ -2065,7 +2143,7 @@ fn poll_and_track_fn_ready<'f>(
     mut fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
     fn_ids_processed: &'f mut Vec<NodeIndex<FnIdInner>>,
     interruptibility_state: InterruptibilityState<'f, 'f>,
-) -> impl Stream<Item = (FnId, bool)> + 'f {
+) -> impl Stream<Item = PollOutcome<FnId>> + 'f {
     stream::poll_fn(move |context| {
         fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
             fn_id_opt.map(|fn_id| {
@@ -2075,12 +2153,6 @@ fn poll_and_track_fn_ready<'f>(
         })
     })
     .interruptible_with(interruptibility_state)
-    .filter_map(|fn_id_poll_outcome| {
-        futures::future::ready(match fn_id_poll_outcome {
-            PollOutcome::Interrupted(fn_id_opt) => fn_id_opt.map(|fn_id| (fn_id, true)),
-            PollOutcome::NoInterrupt(fn_id) => Some((fn_id, false)),
-        })
-    })
 }
 
 #[cfg(feature = "async")]
