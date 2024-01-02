@@ -206,16 +206,9 @@ impl<F> FnGraph<F> {
                         predecessor_counts[child_fn_id.index()] -= 1;
                         if predecessor_counts[child_fn_id.index()] == 0 {
                             if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
-                                fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
-                                    #[cfg_attr(coverage_nightly, coverage(off))]
-                                    |e| {
-                                        panic!(
-                                            "Failed to queue function `{}`. Cause: {}",
-                                            fn_id.index(),
-                                            e
-                                        )
-                                    },
-                                );
+                                // If we fail to queue a function, the scheduler has been
+                                // interrupted.
+                                let _ = fn_ready_tx.try_send(child_fn_id);
                             }
                         }
                     }),
@@ -2086,16 +2079,9 @@ async fn queuer_stream_fold(
                         predecessor_counts[child_fn_id.index()] -= 1;
                         if predecessor_counts[child_fn_id.index()] == 0 {
                             if let Some(fn_ready_tx) = fn_ready_tx.as_ref() {
-                                fn_ready_tx.try_send(child_fn_id).unwrap_or_else(
-                                    #[cfg_attr(coverage_nightly, coverage(off))]
-                                    |e| {
-                                        panic!(
-                                            "Failed to queue function `{}`. Cause: {}",
-                                            fn_id.index(),
-                                            e
-                                        )
-                                    },
-                                );
+                                // If we fail to queue a function, the scheduler has been
+                                // interrupted.
+                                let _ = fn_ready_tx.try_send(child_fn_id);
                             }
                         }
                     });
