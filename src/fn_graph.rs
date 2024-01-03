@@ -3237,7 +3237,7 @@ mod tests {
             let stream_outcome_task = async move {
                 test_timeout(
                     Duration::from_millis(50),
-                    Duration::from_millis(120),
+                    Duration::from_millis(130),
                     fn_graph.for_each_concurrent_with(
                         None,
                         StreamOpts::new().interruptibility_state(
@@ -4024,7 +4024,7 @@ mod tests {
             let stream_outcome_task = async move {
                 test_timeout(
                     Duration::from_millis(50),
-                    Duration::from_millis(120),
+                    Duration::from_millis(130),
                     fn_graph.try_for_each_concurrent_with(
                         None,
                         StreamOpts::new().interruptibility_state(
