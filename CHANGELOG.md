@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.11.0 (2024-01-03)
 
 * Fix `StreamOutcome` `fn_ids_processed` and `fn_ids_not_processed` values.
 * Remove `StreamProgress` and `StreamProgressState`.
