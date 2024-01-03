@@ -3408,7 +3408,7 @@ mod tests {
                 fn_graph.try_for_each_concurrent_with(
                     None,
                     StreamOpts::new().interruptibility_state(
-                        Interruptibility::poll_next_n(interrupt_rx.into(), 7).into(),
+                        Interruptibility::poll_next_n(interrupt_rx.into(), 4).into(),
                     ),
                     |f| {
                         let fut = f.call(resources);
@@ -3566,13 +3566,13 @@ mod tests {
             .unwrap();
 
             // "f" and "a" are preloaded.
-            let fn_ids_processed = [5] // "f"
+            let fn_ids_processed = [5, 0] // "f", "a"
                 .into_iter()
                 .map(NodeIndex::new)
                 .collect::<Vec<NodeIndex<FnIdInner>>>();
 
             // Note: `FnId`s are in insertion order when not processed.
-            let fn_ids_not_processed = [0, 1, 2, 3, 4] // "a", "b", "c", "d", "e"
+            let fn_ids_not_processed = [1, 2, 3, 4] // "b", "c", "d", "e"
                 .into_iter()
                 .map(NodeIndex::new)
                 .collect::<Vec<NodeIndex<FnIdInner>>>();
@@ -3591,7 +3591,7 @@ mod tests {
                 .collect::<Vec<&'static str>>()
                 .await;
 
-            assert_eq!(["f"], fn_iter_order.as_slice());
+            assert_eq!(["f", "a"], fn_iter_order.as_slice());
 
             Ok(())
         }

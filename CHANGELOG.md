@@ -1,9 +1,10 @@
 # Changelog
 
-## unreleased
+## 0.11.0 (2024-01-03)
 
 * Fix `StreamOutcome` `fn_ids_processed` and `fn_ids_not_processed` values.
 * Remove `StreamProgress` and `StreamProgressState`.
+* Update `interruptible` to `0.2.1`.
 
 
 ## 0.10.0 (2023-12-28)
