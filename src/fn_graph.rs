@@ -2163,10 +2163,10 @@ async fn queuer_stream_fold(
 }
 
 #[cfg(feature = "async")]
-fn poll_and_track_fn_ready_common<'f>(
+fn poll_and_track_fn_ready_common(
     mut fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
-    fn_ids_processed: &'f mut Vec<NodeIndex<FnIdInner>>,
-) -> impl Stream<Item = FnId> + 'f {
+    fn_ids_processed: &mut Vec<NodeIndex<FnIdInner>>,
+) -> impl Stream<Item = FnId> + '_ {
     stream::poll_fn(move |context| {
         fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
             fn_id_opt.map(|fn_id| {
