@@ -114,9 +114,9 @@ impl<F> FnGraph<F> {
     ///
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
-    #[cfg(all(feature = "async", not(feature = "interruptible")))]
+    #[cfg(feature = "async")]
     pub fn stream(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_with(StreamOpts::default())
+        self.stream_internal(StreamOrder::Forward)
     }
 
     /// Returns a stream of function references in topological order.
@@ -124,21 +124,28 @@ impl<F> FnGraph<F> {
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
     #[cfg(all(feature = "async", feature = "interruptible"))]
-    pub fn stream(&self) -> impl Stream<Item = PollOutcome<FnRef<'_, F>>> + '_ {
-        self.stream_with(StreamOpts::default())
+    pub fn stream_interruptible(&self) -> impl Stream<Item = PollOutcome<FnRef<'_, F>>> + '_ {
+        self.stream_with_interruptible(StreamOpts::default())
     }
 
     /// Returns a stream of function references in reverse topological order.
     ///
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
-    #[cfg(all(feature = "async", not(feature = "interruptible")))]
+    ///
+    /// For this function, interruptibility fields are ignored -- use the
+    /// `stream_with_interruptible` method insteaad.
+    #[cfg(feature = "async")]
     pub fn stream_with<'rx>(
         &'rx self,
         opts: StreamOpts<'rx, 'rx>,
     ) -> impl Stream<Item = FnRef<'rx, F>> + 'rx {
         let StreamOpts {
             stream_order,
+            #[cfg(feature = "interruptible")]
+                interruptibility_state: _,
+            #[cfg(feature = "interruptible")]
+                interrupted_next_item_include: _,
             marker: _,
         } = opts;
 
@@ -157,27 +164,23 @@ impl<F> FnGraph<F> {
     /// use [`fold_async_with`][FnGraph::fold_async_with] or
     /// [`try_fold_async_with`][FnGraph::try_fold_async_with],
     #[cfg(all(feature = "async", feature = "interruptible"))]
-    pub fn stream_with<'rx>(
+    pub fn stream_with_interruptible<'rx>(
         &'rx self,
         opts: StreamOpts<'rx, 'rx>,
     ) -> impl Stream<Item = PollOutcome<FnRef<'rx, F>>> + 'rx {
         let StreamOpts {
             stream_order,
             interruptibility_state,
-            interrupted_next_item_include,
+            interrupted_next_item_include: _,
             marker: _,
         } = opts;
 
-        self.stream_internal(stream_order, interrupted_next_item_include)
+        self.stream_internal(stream_order)
             .interruptible_with(interruptibility_state)
     }
 
     #[cfg(feature = "async")]
-    fn stream_internal(
-        &self,
-        stream_order: StreamOrder,
-        #[cfg(feature = "interruptible")] _interrupted_next_item_include: bool,
-    ) -> impl Stream<Item = FnRef<'_, F>> + '_ {
+    fn stream_internal(&self, stream_order: StreamOrder) -> impl Stream<Item = FnRef<'_, F>> + '_ {
         let FnGraph {
             ref graph,
             ref graph_structure,
@@ -2704,7 +2707,6 @@ mod tests {
         }
 
         #[tokio::test]
-        #[cfg(not(feature = "interruptible"))]
         async fn stream_returns_fns_in_dep_order_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -2759,13 +2761,38 @@ mod tests {
                 fn_graph
                     .stream_with(StreamOpts::new().rev())
                     .for_each_concurrent(None, |f| async move {
-                        #[cfg(not(feature = "interruptible"))]
                         let _ = f.call(resources).await;
+                    }),
+            )
+            .await;
 
-                        #[cfg(feature = "interruptible")]
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .take(fn_graph.node_count())
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["e", "d", "b", "c", "f", "a"], fn_iter_order.as_slice());
+            Ok(())
+        }
+
+        #[cfg(feature = "interruptible")]
+        #[tokio::test]
+        async fn stream_with_interruptible_rev_returns_fns_in_dep_rev_order_concurrently()
+        -> Result<(), Box<dyn std::error::Error>> {
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+            test_timeout(
+                Duration::from_millis(200),
+                Duration::from_millis(255),
+                fn_graph
+                    .stream_with_interruptible(StreamOpts::new().rev())
+                    .for_each_concurrent(None, |f| async move {
                         use interruptible::PollOutcome;
 
-                        #[cfg(feature = "interruptible")]
                         match f {
                             PollOutcome::Interrupted(None) => {}
                             PollOutcome::Interrupted(Some(f)) | PollOutcome::NoInterrupt(f) => {

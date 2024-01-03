@@ -3,6 +3,7 @@
 ## unreleased
 
 * Add `StreamOpts::interrupted_next_item_include` to toggle whether interrupted item is streamed.
+* Separate `FnGraph::stream` and `FnGraph::stream_with`, from `FnGraph::stream_interruptible` and `FnGraph::stream_with_interruptible`.
 
 
 ## 0.11.0 (2024-01-03)
