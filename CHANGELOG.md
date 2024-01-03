@@ -1,5 +1,10 @@
 # Changelog
 
+## unreleased
+
+* Add `StreamOpts::interrupted_next_item_include` to toggle whether interrupted item is streamed.
+
+
 ## 0.11.0 (2024-01-03)
 
 * Fix `StreamOutcome` `fn_ids_processed` and `fn_ids_not_processed` values.
