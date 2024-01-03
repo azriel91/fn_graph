@@ -114,9 +114,18 @@ impl<F> FnGraph<F> {
     ///
     /// Functions are produced by the stream only when all of their predecessors
     /// have returned.
-    #[cfg(feature = "async")]
+    #[cfg(all(feature = "async", not(feature = "interruptible")))]
     pub fn stream(&self) -> impl Stream<Item = FnRef<'_, F>> + '_ {
-        self.stream_internal(StreamOrder::Forward)
+        self.stream_with(StreamOpts::default())
+    }
+
+    /// Returns a stream of function references in topological order.
+    ///
+    /// Functions are produced by the stream only when all of their predecessors
+    /// have returned.
+    #[cfg(all(feature = "async", feature = "interruptible"))]
+    pub fn stream(&self) -> impl Stream<Item = PollOutcome<FnRef<'_, F>>> + '_ {
+        self.stream_with(StreamOpts::default())
     }
 
     /// Returns a stream of function references in reverse topological order.
@@ -155,15 +164,20 @@ impl<F> FnGraph<F> {
         let StreamOpts {
             stream_order,
             interruptibility_state,
+            interrupted_next_item_include,
             marker: _,
         } = opts;
 
-        self.stream_internal(stream_order)
+        self.stream_internal(stream_order, interrupted_next_item_include)
             .interruptible_with(interruptibility_state)
     }
 
     #[cfg(feature = "async")]
-    fn stream_internal(&self, stream_order: StreamOrder) -> impl Stream<Item = FnRef<'_, F>> + '_ {
+    fn stream_internal(
+        &self,
+        stream_order: StreamOrder,
+        #[cfg(feature = "interruptible")] _interrupted_next_item_include: bool,
+    ) -> impl Stream<Item = FnRef<'_, F>> + '_ {
         let FnGraph {
             ref graph,
             ref graph_structure,
@@ -302,6 +316,8 @@ impl<F> FnGraph<F> {
             stream_order,
             #[cfg(feature = "interruptible")]
             interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
             marker: _,
         } = opts;
 
@@ -340,6 +356,8 @@ impl<F> FnGraph<F> {
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
                 interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .fold(
                 fold_stream_state,
@@ -349,10 +367,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     let FoldStreamState {
                         graph,
@@ -474,6 +489,8 @@ impl<F> FnGraph<F> {
             stream_order,
             #[cfg(feature = "interruptible")]
             interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
             marker: _,
         } = opts;
 
@@ -512,6 +529,8 @@ impl<F> FnGraph<F> {
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
                 interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .fold(
                 fold_stream_state,
@@ -521,10 +540,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     let FoldStreamStateMut {
                         graph,
@@ -669,6 +685,15 @@ impl<F> FnGraph<F> {
             fns_remaining,
         } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, &opts);
 
+        let StreamOpts {
+            stream_order: _,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
+            marker: _,
+        } = opts;
+
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
         let fns_remaining = &fns_remaining;
@@ -683,7 +708,9 @@ impl<F> FnGraph<F> {
                 fn_ready_rx,
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
-                opts.interruptibility_state,
+                interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .for_each_concurrent(
                 limit,
@@ -692,10 +719,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     if let Some(fn_id) = fn_id {
                         let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
@@ -798,6 +822,15 @@ impl<F> FnGraph<F> {
             fns_remaining,
         } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, &opts);
 
+        let StreamOpts {
+            stream_order: _,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
+            marker: _,
+        } = opts;
+
         let fn_done_tx = &fn_done_tx;
         let fn_for_each = &fn_for_each;
         let fns_remaining = &fns_remaining;
@@ -816,7 +849,9 @@ impl<F> FnGraph<F> {
                 fn_ready_rx,
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
-                opts.interruptibility_state,
+                interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .for_each_concurrent(
                 limit,
@@ -825,10 +860,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     if let Some(fn_id) = fn_id {
                         let mut r#fn = fn_mut_refs[fn_id.index()]
@@ -927,6 +959,8 @@ impl<F> FnGraph<F> {
             stream_order,
             #[cfg(feature = "interruptible")]
             interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
             marker: _,
         } = opts;
 
@@ -965,6 +999,8 @@ impl<F> FnGraph<F> {
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
                 interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .map(Result::<_, E>::Ok)
             .try_fold(
@@ -975,10 +1011,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     let FoldStreamState {
                         graph,
@@ -1121,6 +1154,8 @@ impl<F> FnGraph<F> {
             stream_order,
             #[cfg(feature = "interruptible")]
             interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
             marker: _,
         } = opts;
 
@@ -1159,6 +1194,8 @@ impl<F> FnGraph<F> {
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
                 interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .map(Result::<_, E>::Ok)
             .try_fold(
@@ -1169,10 +1206,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     let FoldStreamStateMut {
                         graph,
@@ -1425,6 +1459,15 @@ impl<F> FnGraph<F> {
             fns_remaining,
         } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, &opts);
 
+        let StreamOpts {
+            stream_order: _,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
+            marker: _,
+        } = opts;
+
         let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (result_tx, mut result_rx) = mpsc::channel(channel_capacity);
 
@@ -1444,7 +1487,9 @@ impl<F> FnGraph<F> {
                 fn_ready_rx,
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
-                opts.interruptibility_state,
+                interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .for_each_concurrent(
                 limit,
@@ -1453,10 +1498,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     if let Some(fn_id) = fn_id {
                         let r#fn = fn_refs.node_weight(fn_id).expect("Expected to borrow fn.");
@@ -1685,6 +1727,15 @@ impl<F> FnGraph<F> {
             fns_remaining,
         } = stream_setup_init_concurrent(graph_structure, graph_structure_rev, edge_counts, &opts);
 
+        let StreamOpts {
+            stream_order: _,
+            #[cfg(feature = "interruptible")]
+            interruptibility_state,
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include,
+            marker: _,
+        } = opts;
+
         let channel_capacity = std::cmp::max(1, graph_structure.node_count());
         let (result_tx, mut result_rx) = mpsc::channel(channel_capacity);
 
@@ -1705,7 +1756,9 @@ impl<F> FnGraph<F> {
                 fn_ready_rx,
                 &mut fn_ids_processed,
                 #[cfg(feature = "interruptible")]
-                opts.interruptibility_state,
+                interruptibility_state,
+                #[cfg(feature = "interruptible")]
+                interrupted_next_item_include,
             )
             .for_each_concurrent(
                 limit,
@@ -1714,10 +1767,7 @@ impl<F> FnGraph<F> {
                     #[cfg(not(feature = "interruptible"))]
                     let fn_id = Some(fn_id);
                     #[cfg(feature = "interruptible")]
-                    let (fn_id, interrupted) = match fn_id_poll_outcome {
-                        PollOutcome::Interrupted(fn_id) => (fn_id, true),
-                        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
-                    };
+                    let (fn_id, interrupted) = fn_id_from_interrupt(fn_id_poll_outcome);
 
                     if let Some(fn_id) = fn_id {
                         let mut r#fn = fn_mut_refs[fn_id.index()]
@@ -1863,6 +1913,18 @@ impl<F> FnGraph<F> {
     }
 }
 
+#[cfg(all(feature = "async", feature = "interruptible"))]
+fn fn_id_from_interrupt(
+    fn_id_poll_outcome: PollOutcome<NodeIndex<FnIdInner>>,
+) -> (Option<NodeIndex<FnIdInner>>, bool) {
+    let (fn_id, interrupted) = match fn_id_poll_outcome {
+        PollOutcome::Interrupted(fn_id) => (fn_id, true),
+        PollOutcome::NoInterrupt(fn_id) => (Some(fn_id), false),
+    };
+
+    (fn_id, interrupted)
+}
+
 /// Returns the correct `StreamOutcomeState` after a stream operation has
 /// completed.
 ///
@@ -1999,6 +2061,8 @@ fn stream_setup_init_concurrent<'f>(
         stream_order,
         #[cfg(feature = "interruptible")]
             interruptibility_state: _,
+        #[cfg(feature = "interruptible")]
+            interrupted_next_item_include: _,
         marker: _,
     } = opts;
 
@@ -2098,8 +2162,8 @@ async fn queuer_stream_fold(
         .await;
 }
 
-#[cfg(all(feature = "async", not(feature = "interruptible")))]
-fn poll_and_track_fn_ready<'f>(
+#[cfg(feature = "async")]
+fn poll_and_track_fn_ready_common<'f>(
     mut fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
     fn_ids_processed: &'f mut Vec<NodeIndex<FnIdInner>>,
 ) -> impl Stream<Item = FnId> + 'f {
@@ -2113,21 +2177,45 @@ fn poll_and_track_fn_ready<'f>(
     })
 }
 
+#[cfg(all(feature = "async", not(feature = "interruptible")))]
+fn poll_and_track_fn_ready<'f>(
+    fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
+    fn_ids_processed: &'f mut Vec<NodeIndex<FnIdInner>>,
+) -> impl Stream<Item = FnId> + 'f {
+    poll_and_track_fn_ready_common(fn_ready_rx, fn_ids_processed)
+}
+
 #[cfg(all(feature = "async", feature = "interruptible"))]
 fn poll_and_track_fn_ready<'f>(
     mut fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
     fn_ids_processed: &'f mut Vec<NodeIndex<FnIdInner>>,
     interruptibility_state: InterruptibilityState<'f, 'f>,
+    interrupted_next_item_include: bool,
 ) -> impl Stream<Item = PollOutcome<FnId>> + 'f {
-    stream::poll_fn(move |context| {
-        fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
-            fn_id_opt.map(|fn_id| {
-                fn_ids_processed.push(fn_id);
-                fn_id
+    if interrupted_next_item_include {
+        poll_and_track_fn_ready_common(fn_ready_rx, fn_ids_processed)
+            .interruptible_with(interruptibility_state)
+            .left_stream()
+    } else {
+        stream::poll_fn(move |context| fn_ready_rx.poll_recv(context))
+            .interruptible_with(interruptibility_state)
+            .filter_map(|mut fn_id_poll_outcome| {
+                let fn_id = match &mut fn_id_poll_outcome {
+                    PollOutcome::Interrupted(fn_id) => {
+                        fn_id.take();
+                        None
+                    }
+                    PollOutcome::NoInterrupt(fn_id) => Some(*fn_id),
+                };
+
+                if let Some(fn_id) = fn_id {
+                    fn_ids_processed.push(fn_id);
+                }
+
+                futures::future::ready(Some(fn_id_poll_outcome))
             })
-        })
-    })
-    .interruptible_with(interruptibility_state)
+            .right_stream()
+    }
 }
 
 #[cfg(feature = "async")]
@@ -2616,6 +2704,7 @@ mod tests {
         }
 
         #[tokio::test]
+        #[cfg(not(feature = "interruptible"))]
         async fn stream_returns_fns_in_dep_order_concurrently()
         -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3523,6 +3612,160 @@ mod tests {
                 .await;
 
             assert_eq!(<[&str; 0]>::default(), fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[cfg(feature = "interruptible")]
+        async fn try_for_each_concurrent_with_interrupt_finish_current_with_sleep()
+        -> Result<(), Box<dyn std::error::Error>> {
+            use interruptible::{InterruptSignal, InterruptibilityState};
+
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (interrupt_tx, interrupt_rx) = mpsc::channel::<InterruptSignal>(16);
+
+            let interrupt_after_delay = async move {
+                tokio::time::sleep(sleep_duration!() / 2).await;
+                interrupt_tx
+                    .send(InterruptSignal)
+                    .await
+                    .expect("Expected `InterruptSignal` to be sent successfully.");
+            };
+            let stream_outcome_task = async move {
+                test_timeout(
+                    Duration::from_millis(50),
+                    Duration::from_millis(120),
+                    fn_graph.try_for_each_concurrent_with(
+                        None,
+                        StreamOpts::new().interruptibility_state(
+                            InterruptibilityState::new_finish_current(interrupt_rx.into()),
+                        ),
+                        |f| {
+                            let fut = f.call(resources);
+                            async move {
+                                let _ = fut.await;
+                                Result::<_, TestError>::Ok(())
+                            }
+                        },
+                    ),
+                )
+                .await
+                .unwrap()
+            };
+            let (stream_outcome, ()) = tokio::join!(stream_outcome_task, interrupt_after_delay);
+
+            // "f" and "a" are preloaded.
+            let fn_ids_processed = [5, 0, 2] // "f", "a", "c"
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+
+            // Note: `FnId`s are in insertion order when not processed.
+            let fn_ids_not_processed = [1, 3, 4] // "b", "d", "e"
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+            assert_eq!(
+                StreamOutcome {
+                    value: (),
+                    state: StreamOutcomeState::Interrupted,
+                    fn_ids_processed,
+                    fn_ids_not_processed,
+                },
+                stream_outcome
+            );
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a", "c"], fn_iter_order.as_slice());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[cfg(feature = "interruptible")]
+        async fn try_for_each_concurrent_with_interrupt_finish_current_with_sleep_include_interrupted_false()
+        -> Result<(), Box<dyn std::error::Error>> {
+            use interruptible::{InterruptSignal, InterruptibilityState};
+
+            let (fn_graph, mut seq_rx) = complex_graph_unit()?;
+
+            let mut resources = Resources::new();
+            resources.insert(0u8);
+            resources.insert(0u16);
+            let resources = &resources;
+
+            let (interrupt_tx, interrupt_rx) = mpsc::channel::<InterruptSignal>(16);
+
+            let interrupt_after_delay = async move {
+                tokio::time::sleep(sleep_duration!() / 2).await;
+                interrupt_tx
+                    .send(InterruptSignal)
+                    .await
+                    .expect("Expected `InterruptSignal` to be sent successfully.");
+            };
+            let stream_outcome_task = async move {
+                test_timeout(
+                    Duration::from_millis(50),
+                    Duration::from_millis(75),
+                    fn_graph.try_for_each_concurrent_with(
+                        None,
+                        StreamOpts::new()
+                            .interruptibility_state(InterruptibilityState::new_finish_current(
+                                interrupt_rx.into(),
+                            ))
+                            .interrupted_next_item_include(false),
+                        |f| {
+                            let fut = f.call(resources);
+                            async move {
+                                let _ = fut.await;
+                                Result::<_, TestError>::Ok(())
+                            }
+                        },
+                    ),
+                )
+                .await
+                .unwrap()
+            };
+            let (stream_outcome, ()) = tokio::join!(stream_outcome_task, interrupt_after_delay);
+
+            // "f" and "a" are preloaded.
+            let fn_ids_processed = [5, 0] // "f", "a"
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+
+            // Note: `FnId`s are in insertion order when not processed.
+            let fn_ids_not_processed = [1, 2, 3, 4] // "b", "c", "d", "e"
+                .into_iter()
+                .map(NodeIndex::new)
+                .collect::<Vec<NodeIndex<FnIdInner>>>();
+            assert_eq!(
+                StreamOutcome {
+                    value: (),
+                    state: StreamOutcomeState::Interrupted,
+                    fn_ids_processed,
+                    fn_ids_not_processed,
+                },
+                stream_outcome
+            );
+
+            seq_rx.close();
+            let fn_iter_order = stream::poll_fn(|context| seq_rx.poll_recv(context))
+                .collect::<Vec<&'static str>>()
+                .await;
+
+            assert_eq!(["f", "a"], fn_iter_order.as_slice());
 
             Ok(())
         }
