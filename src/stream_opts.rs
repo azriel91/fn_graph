@@ -10,9 +10,14 @@ use crate::StreamOrder;
 pub struct StreamOpts<'rx, 'intx> {
     /// Order to stream items.
     pub(crate) stream_order: StreamOrder,
-    /// Whether the stream is interruptible
+    /// Whether the stream is interruptible.
     #[cfg(feature = "interruptible")]
     pub(crate) interruptibility_state: InterruptibilityState<'rx, 'intx>,
+    /// Whether the stream should produce the next `FnId` when interrupted.
+    ///
+    /// Defaults to `true`, so no `FnId`s are dropped if they are polled.
+    #[cfg(feature = "interruptible")]
+    pub(crate) interrupted_next_item_include: bool,
     /// Marker.
     pub(crate) marker: PhantomData<&'intx &'rx ()>,
 }
@@ -41,6 +46,15 @@ impl<'rx, 'intx> StreamOpts<'rx, 'intx> {
         self.interruptibility_state = interruptibility_state;
         self
     }
+
+    /// Whether the stream should produce the next `FnId` when interrupted.
+    ///
+    /// Defaults to `true`, so no `FnId`s are dropped if they are polled.
+    #[cfg(feature = "interruptible")]
+    pub fn interrupted_next_item_include(mut self, interrupted_next_item_include: bool) -> Self {
+        self.interrupted_next_item_include = interrupted_next_item_include;
+        self
+    }
 }
 
 impl<'rx, 'intx> Default for StreamOpts<'rx, 'intx> {
@@ -49,6 +63,8 @@ impl<'rx, 'intx> Default for StreamOpts<'rx, 'intx> {
             stream_order: StreamOrder::Forward,
             #[cfg(feature = "interruptible")]
             interruptibility_state: Interruptibility::NonInterruptible.into(),
+            #[cfg(feature = "interruptible")]
+            interrupted_next_item_include: true,
             marker: PhantomData,
         }
     }
