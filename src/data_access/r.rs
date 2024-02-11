@@ -9,8 +9,18 @@ use crate::{DataAccess, DataAccessDyn, TypeIds};
 #[derive(Debug)]
 pub struct R<'read, T>(&'read T);
 
+/// Read access to `T`.
 #[cfg(feature = "resman")]
 pub type R<'read, T> = resman::Ref<'read, T>;
+
+#[cfg(not(feature = "resman"))]
+impl<'read, T> std::ops::Deref for R<'read, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
 
 #[cfg(not(feature = "fn_meta"))]
 impl<'read, T> DataAccess for R<'read, T>
