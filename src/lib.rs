@@ -110,6 +110,9 @@ pub use crate::{
     type_ids::TypeIds,
 };
 
+#[cfg(feature = "graph_info")]
+pub use crate::graph_info::GraphInfo;
+
 #[cfg(feature = "resman")]
 pub use crate::data_access::DataBorrow;
 
@@ -147,3 +150,6 @@ pub use crate::stream_outcome::{StreamOutcome, StreamOutcomeState};
 
 #[cfg(feature = "async")]
 mod stream_outcome;
+
+#[cfg(feature = "graph_info")]
+mod graph_info;

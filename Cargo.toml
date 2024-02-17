@@ -20,6 +20,7 @@ fn_meta = { version = "0.7.3", optional = true, features = ["fn_meta_ext"] }
 interruptible = { version = "0.2.1", optional = true, features = ["stream"] }
 resman = { version = "0.17", optional = true, features = ["debug"] }
 futures = { version = "0.3.30", optional = true }
+serde = { version = "1.0.196", optional = true, features = ["derive"] }
 smallvec = "1.13"
 tokio = { version = "1.36", features = ["sync"] }
 
@@ -33,6 +34,7 @@ tokio = { version = "1.36", features = ["macros", "rt", "sync", "time"] }
 [features]
 default = ["async"]
 async = ["futures"]
+graph_info = ["dep:serde", "daggy/serde-1"]
 interruptible = ["dep:interruptible"]
 fn_res = ["resman?/fn_res"]
 
