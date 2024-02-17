@@ -30,9 +30,10 @@ where
     /// Adds a function to the graph.
     ///
     /// The returned function ID is used to specify dependencies between
-    /// functions through the [`add_edge`] method.
+    /// functions through the [`add_logic_edge`], [`add_contains_edge`] methods.
     ///
-    /// [`add_edge`]: Self::add_edge
+    /// [`add_logic_edge`]: Self::add_logic_edge
+    /// [`add_contains_edge`]: Self::add_contains_edge
     pub fn add_fn(&mut self, f: F) -> FnId {
         self.graph.add_node(f)
     }
@@ -40,10 +41,10 @@ where
     /// Adds multiple functions to the graph.
     ///
     /// The returned function IDs are used to specify dependencies between
-    /// functions through the [`add_edge`] / [`add_edges`] method.
+    /// functions through the [`add_logic_edge`] / [`add_logic_edges`] method.
     ///
-    /// [`add_edge`]: Self::add_edge
-    /// [`add_edges`]: Self::add_edges
+    /// [`add_logic_edge`]: Self::add_logic_edge
+    /// [`add_logic_edges`]: Self::add_logic_edges
     pub fn add_fns<const N: usize>(&mut self, fns: [F; N]) -> [FnId; N] {
         let mut fn_ids: [FnId; N] = [FnId::default(); N];
         IntoIterator::into_iter(fns)
@@ -54,26 +55,46 @@ where
         fn_ids
     }
 
-    /// Adds an edge from one function to another.
+    /// Adds a logic edge from one function to another.
     ///
-    /// This differs from [`petgraph`'s `add_edge`] in that this only allows one
-    /// edge between two functions. When this function is called multiple times
-    /// with the same functions, only the last call's edge will be retained.
+    /// This differs from `petgraph`'s [`add_edge`] in that this only
+    /// allows one edge between two functions. When this function is called
+    /// multiple times with the same functions, only the last call's edge
+    /// will be retained.
     ///
-    /// [`petgraph`'s `add_edge`]: daggy::petgraph::data::Build::add_edge
-    pub fn add_edge(
+    /// [`add_edge`]: daggy::petgraph::data::Build::add_edge
+    pub fn add_logic_edge(
         &mut self,
         function_from: FnId,
         function_to: FnId,
     ) -> Result<EdgeId, WouldCycle<Edge>> {
-        // Use `update_edge` instead of `add_edge` to avoid duplicate edges from one
-        // function to the other.
+        // Use `update_edge` instead of `add_logic_edge` to avoid duplicate edges from
+        // one function to the other.
         self.graph
             .update_edge(function_from, function_to, Edge::Logic)
     }
 
-    /// Adds edges between functions.
-    pub fn add_edges<const N: usize>(
+    /// Adds a contains edge from one function to another.
+    ///
+    /// This differs from `petgraph`'s [`add_edge`] in that this only
+    /// allows one edge between two functions. When this function is called
+    /// multiple times with the same functions, only the last call's edge
+    /// will be retained.
+    ///
+    /// [`add_edge`]: daggy::petgraph::data::Build::add_edge
+    pub fn add_contains_edge(
+        &mut self,
+        function_from: FnId,
+        function_to: FnId,
+    ) -> Result<EdgeId, WouldCycle<Edge>> {
+        // Use `update_edge` instead of `add_logic_edge` to avoid duplicate edges from
+        // one function to the other.
+        self.graph
+            .update_edge(function_from, function_to, Edge::Contains)
+    }
+
+    /// Adds logic edges between functions.
+    pub fn add_logic_edges<const N: usize>(
         &mut self,
         edges: [(FnId, FnId); N],
     ) -> Result<[EdgeId; N], WouldCycle<Edge>> {
@@ -81,7 +102,24 @@ where
         IntoIterator::into_iter(edges)
             .zip(edge_ids.iter_mut())
             .try_for_each(|((fn_from, fn_to), edge_id)| {
-                self.add_edge(fn_from, fn_to).map(|edge_index| {
+                self.add_logic_edge(fn_from, fn_to).map(|edge_index| {
+                    *edge_id = edge_index;
+                })
+            })?;
+
+        Ok(edge_ids)
+    }
+
+    /// Adds contains edges between functions.
+    pub fn add_contains_edges<const N: usize>(
+        &mut self,
+        edges: [(FnId, FnId); N],
+    ) -> Result<[EdgeId; N], WouldCycle<Edge>> {
+        let mut edge_ids: [EdgeId; N] = [EdgeId::default(); N];
+        IntoIterator::into_iter(edges)
+            .zip(edge_ids.iter_mut())
+            .try_for_each(|((fn_from, fn_to), edge_id)| {
+                self.add_contains_edge(fn_from, fn_to).map(|edge_index| {
                     *edge_id = edge_index;
                 })
             })?;
@@ -171,14 +209,14 @@ mod tests {
     }
 
     #[test]
-    fn add_edge() -> Result<(), WouldCycle<Edge>> {
+    fn add_logic_edge() -> Result<(), WouldCycle<Edge>> {
         let mut fn_graph_builder = FnGraphBuilder::new();
         let fn_a = fn_graph_builder.add_fn((|| {}).into_fn_res());
         let fn_b = fn_graph_builder.add_fn((|_: &usize| {}).into_fn_res());
         let fn_c = fn_graph_builder.add_fn((|_: &mut usize, _: &mut u32| {}).into_fn_res());
         let _fn_d = fn_graph_builder.add_fn((|_: &usize, _: &u32| {}).into_fn_res());
-        fn_graph_builder.add_edge(fn_a, fn_b)?;
-        fn_graph_builder.add_edge(fn_b, fn_c)?;
+        fn_graph_builder.add_logic_edge(fn_a, fn_b)?;
+        fn_graph_builder.add_logic_edge(fn_b, fn_c)?;
 
         let fn_graph = fn_graph_builder.build();
 
@@ -190,13 +228,13 @@ mod tests {
     }
 
     #[test]
-    fn add_edges() -> Result<(), WouldCycle<Edge>> {
+    fn add_logic_edges() -> Result<(), WouldCycle<Edge>> {
         let mut fn_graph_builder = FnGraphBuilder::new();
         let fn_a = fn_graph_builder.add_fn((|| {}).into_fn_res());
         let fn_b = fn_graph_builder.add_fn((|_: &usize| {}).into_fn_res());
         let fn_c = fn_graph_builder.add_fn((|_: &mut usize, _: &mut u32| {}).into_fn_res());
         let _fn_d = fn_graph_builder.add_fn((|_: &usize, _: &u32| {}).into_fn_res());
-        fn_graph_builder.add_edges([(fn_a, fn_b), (fn_b, fn_c)])?;
+        fn_graph_builder.add_logic_edges([(fn_a, fn_b), (fn_b, fn_c)])?;
 
         let fn_graph = fn_graph_builder.build();
 

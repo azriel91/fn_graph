@@ -5363,7 +5363,7 @@ mod tests {
                     })
                     .into_fn_res(),
                 ]);
-            fn_graph_builder.add_edges([
+            fn_graph_builder.add_logic_edges([
                 (fn_id_a, fn_id_b),
                 (fn_id_a, fn_id_c),
                 (fn_id_b, fn_id_e),
@@ -5475,7 +5475,7 @@ mod tests {
                     })
                     .into_fn_res_mut(),
                 ]);
-            fn_graph_builder.add_edges([
+            fn_graph_builder.add_contains_edges([
                 (fn_id_a, fn_id_b),
                 (fn_id_a, fn_id_c),
                 (fn_id_b, fn_id_e),
@@ -5519,7 +5519,7 @@ mod tests {
             (|| "e").into_fn_res(),
             (|_: &mut u16| "f").into_fn_res(),
         ]);
-        fn_graph_builder.add_edges([
+        fn_graph_builder.add_logic_edges([
             (fn_id_a, fn_id_b),
             (fn_id_a, fn_id_c),
             (fn_id_b, fn_id_e),
