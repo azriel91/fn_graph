@@ -1,4 +1,4 @@
-use std::ops::{Deref, Drop};
+use std::ops::Deref;
 
 use tokio::sync::mpsc::Sender;
 
