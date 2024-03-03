@@ -112,3 +112,245 @@ where
 }
 
 impl<NodeInfo> Eq for GraphInfo<NodeInfo> where NodeInfo: Eq {}
+
+#[cfg(feature = "fn_meta")]
+#[cfg(test)]
+mod tests {
+    use daggy::WouldCycle;
+    use resman::{FnRes, IntoFnRes, Resources};
+
+    use super::GraphInfo;
+    use crate::{Edge, FnGraph, FnGraphBuilder, FnId};
+
+    type BoxFnRes = Box<dyn FnRes<Ret = &'static str>>;
+
+    #[test]
+    fn iter() -> Result<(), WouldCycle<Edge>> {
+        let graph_info = graph_info()?;
+
+        let node_infos = graph_info.iter().copied().collect::<Vec<&'static str>>();
+
+        assert_eq!(["f", "a", "b", "c", "d", "e"], node_infos.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn iter_rev() -> Result<(), WouldCycle<Edge>> {
+        let graph_info = graph_info()?;
+
+        let node_infos = graph_info
+            .iter_rev()
+            .copied()
+            .collect::<Vec<&'static str>>();
+
+        assert_eq!(["e", "d", "c", "b", "a", "f"], node_infos.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn iter_insertion_with_indices() -> Result<(), WouldCycle<Edge>> {
+        let graph_info = graph_info()?;
+
+        let node_infos_with_indices = graph_info
+            .iter_insertion_with_indices()
+            .map(|(fn_id, node_info)| (fn_id, *node_info))
+            .collect::<Vec<(FnId, &'static str)>>();
+
+        assert_eq!(
+            [
+                (FnId::new(0), "a"),
+                (FnId::new(1), "b"),
+                (FnId::new(2), "c"),
+                (FnId::new(3), "d"),
+                (FnId::new(4), "e"),
+                (FnId::new(5), "f"),
+            ],
+            node_infos_with_indices.as_slice()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_eq() -> Result<(), WouldCycle<Edge>> {
+        let graph_info = graph_info()?;
+
+        let graph_info_clone = Clone::clone(&graph_info);
+
+        assert_eq!(graph_info, graph_info_clone);
+        Ok(())
+    }
+
+    #[test]
+    fn serialize() -> Result<(), Box<dyn std::error::Error>> {
+        let graph_info = graph_info()?;
+
+        assert_eq!(
+            r#"graph:
+  nodes:
+  - a
+  - b
+  - c
+  - d
+  - e
+  - f
+  node_holes: []
+  edge_property: directed
+  edges:
+  - - 0
+    - 1
+    - Logic
+  - - 0
+    - 2
+    - Logic
+  - - 1
+    - 4
+    - Logic
+  - - 2
+    - 3
+    - Logic
+  - - 3
+    - 4
+    - Logic
+  - - 5
+    - 4
+    - Logic
+  - - 1
+    - 3
+    - Data
+  - - 5
+    - 1
+    - Data
+graph_structure_rev:
+  nodes:
+  - null
+  - null
+  - null
+  - null
+  - null
+  - null
+  node_holes: []
+  edge_property: directed
+  edges:
+  - - 1
+    - 0
+    - Logic
+  - - 2
+    - 0
+    - Logic
+  - - 4
+    - 1
+    - Logic
+  - - 3
+    - 2
+    - Logic
+  - - 4
+    - 3
+    - Logic
+  - - 4
+    - 5
+    - Logic
+  - - 3
+    - 1
+    - Data
+  - - 1
+    - 5
+    - Data
+"#,
+            serde_yaml::to_string(&graph_info)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize() -> Result<(), Box<dyn std::error::Error>> {
+        let graph_info = graph_info()?;
+
+        assert_eq!(
+            graph_info,
+            serde_yaml::from_str(
+                r#"graph:
+  nodes: [a, b, c, d, e, f]
+  node_holes: []
+  edge_property: directed
+  edges:
+  - [0, 1, Logic]
+  - [0, 2, Logic]
+  - [1, 4, Logic]
+  - [2, 3, Logic]
+  - [3, 4, Logic]
+  - [5, 4, Logic]
+  - [1, 3, Data]
+  - [5, 1, Data]
+graph_structure_rev:
+  nodes: [null, null, null, null, null, null]
+  node_holes: []
+  edge_property: directed
+  edges:
+  - [1, 0, Logic]
+  - [2, 0, Logic]
+  - [4, 1, Logic]
+  - [3, 2, Logic]
+  - [4, 3, Logic]
+  - [4, 5, Logic]
+  - [3, 1, Data]
+  - [1, 5, Data]
+"#
+            )?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn debug() -> Result<(), WouldCycle<Edge>> {
+        let graph_info = graph_info()?;
+
+        assert_eq!(
+            "GraphInfo { \
+                graph: Dag { graph: Graph { Ty: \"Directed\", node_count: 6, edge_count: 8, edges: (0, 1), (0, 2), (1, 4), (2, 3), (3, 4), (5, 4), (1, 3), (5, 1), node weights: {0: \"a\", 1: \"b\", 2: \"c\", 3: \"d\", 4: \"e\", 5: \"f\"}, edge weights: {0: Logic, 1: Logic, 2: Logic, 3: Logic, 4: Logic, 5: Logic, 6: Data, 7: Data} }, cycle_state: DfsSpace { dfs: Dfs { stack: [], discovered: FixedBitSet { data: [], length: 0 } } } }, \
+                graph_structure_rev: Dag { graph: Graph { Ty: \"Directed\", node_count: 6, edge_count: 8, edges: (1, 0), (2, 0), (4, 1), (3, 2), (4, 3), (4, 5), (3, 1), (1, 5), edge weights: {0: Logic, 1: Logic, 2: Logic, 3: Logic, 4: Logic, 5: Logic, 6: Data, 7: Data} }, cycle_state: DfsSpace { dfs: Dfs { stack: [], discovered: FixedBitSet { data: [3], length: 6 } } } } \
+            }",
+            format!("{graph_info:?}")
+        );
+        Ok(())
+    }
+
+    fn graph_info() -> Result<GraphInfo<&'static str>, WouldCycle<Edge>> {
+        let mut resources = Resources::new();
+        resources.insert(8u8);
+        resources.insert(16u16);
+
+        complex_graph()
+            .map(|graph| GraphInfo::from_graph(&graph, |f: &BoxFnRes| f.call(&resources)))
+    }
+
+    fn complex_graph() -> Result<FnGraph<BoxFnRes>, WouldCycle<Edge>> {
+        // a - b --------- e
+        //   \          / /
+        //    '-- c - d  /
+        //              /
+        //   f --------'
+        //
+        // `b`, `d`, and `f` all require `&mut u16`
+        //
+        // Data edges augmented for `b -> d`,`f -> b`
+        let mut fn_graph_builder = FnGraphBuilder::new();
+        let [fn_id_a, fn_id_b, fn_id_c, fn_id_d, fn_id_e, fn_id_f] = fn_graph_builder.add_fns([
+            (|_: &u8| "a").into_fn_res(),
+            (|_: &mut u16| "b").into_fn_res(),
+            (|| "c").into_fn_res(),
+            (|_: &u8, _: &mut u16| "d").into_fn_res(),
+            (|| "e").into_fn_res(),
+            (|_: &mut u16| "f").into_fn_res(),
+        ]);
+        fn_graph_builder.add_logic_edges([
+            (fn_id_a, fn_id_b),
+            (fn_id_a, fn_id_c),
+            (fn_id_b, fn_id_e),
+            (fn_id_c, fn_id_d),
+            (fn_id_d, fn_id_e),
+            (fn_id_f, fn_id_e),
+        ])?;
+        let fn_graph = fn_graph_builder.build();
+        Ok(fn_graph)
+    }
+}

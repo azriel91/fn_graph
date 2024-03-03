@@ -30,6 +30,7 @@ wasm-bindgen = "0.2.91"
 [dev-dependencies]
 resman = { version = "0.17", features = ["debug", "fn_res", "fn_res_mut", "fn_meta"] }
 tokio = { version = "1.36", features = ["macros", "rt", "sync", "time"] }
+serde_yaml = "0.9.32"
 
 [features]
 default = ["async"]
