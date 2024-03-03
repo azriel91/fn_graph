@@ -18,14 +18,14 @@ impl<'write, T> std::ops::Deref for W<'write, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        &self.0
+        self.0
     }
 }
 
 #[cfg(not(feature = "resman"))]
 impl<'write, T> std::ops::DerefMut for W<'write, T> {
     fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
+        self.0
     }
 }
 

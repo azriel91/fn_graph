@@ -18,7 +18,7 @@ impl<'read, T> std::ops::Deref for R<'read, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        &self.0
+        self.0
     }
 }
 

@@ -2181,10 +2181,10 @@ fn poll_and_track_fn_ready_common(
 }
 
 #[cfg(all(feature = "async", not(feature = "interruptible")))]
-fn poll_and_track_fn_ready<'f>(
+fn poll_and_track_fn_ready(
     fn_ready_rx: Receiver<NodeIndex<FnIdInner>>,
-    fn_ids_processed: &'f mut Vec<NodeIndex<FnIdInner>>,
-) -> impl Stream<Item = FnId> + 'f {
+    fn_ids_processed: &mut Vec<NodeIndex<FnIdInner>>,
+) -> impl Stream<Item = FnId> + '_ {
     poll_and_track_fn_ready_common(fn_ready_rx, fn_ids_processed)
 }
 
