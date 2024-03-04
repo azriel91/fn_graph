@@ -17,13 +17,13 @@
 //! Add the following to `Cargo.toml`
 //!
 //! ```toml
-//! fn_graph = "0.12.0"
+//! fn_graph = "0.13.0"
 //!
 //! # Integrate with `fn_meta` / `interruptible` / `resman`
-//! fn_graph = { version = "0.12.0", features = ["fn_meta"] }
-//! fn_graph = { version = "0.12.0", features = ["interruptible"] }
-//! fn_graph = { version = "0.12.0", features = ["resman"] }
-//! fn_graph = { version = "0.12.0", features = ["fn_meta", "interruptible", "resman"] }
+//! fn_graph = { version = "0.13.0", features = ["fn_meta"] }
+//! fn_graph = { version = "0.13.0", features = ["interruptible"] }
+//! fn_graph = { version = "0.13.0", features = ["resman"] }
+//! fn_graph = { version = "0.13.0", features = ["fn_meta", "interruptible", "resman"] }
 //! ```
 //!
 //! # Rationale
@@ -110,6 +110,9 @@ pub use crate::{
     type_ids::TypeIds,
 };
 
+#[cfg(feature = "graph_info")]
+pub use crate::graph_info::GraphInfo;
+
 #[cfg(feature = "resman")]
 pub use crate::data_access::DataBorrow;
 
@@ -147,3 +150,6 @@ pub use crate::stream_outcome::{StreamOutcome, StreamOutcomeState};
 
 #[cfg(feature = "async")]
 mod stream_outcome;
+
+#[cfg(feature = "graph_info")]
+mod graph_info;

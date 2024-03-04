@@ -7,10 +7,35 @@ use crate::{DataAccess, DataAccessDyn, TypeIds};
 /// Write access to `T`.
 #[cfg(not(feature = "resman"))]
 #[derive(Debug)]
-pub struct W<'write, T>(&'write T);
+pub struct W<'write, T>(&'write mut T);
 
+#[cfg(not(feature = "resman"))]
+impl<'write, T> W<'write, T> {
+    /// Returns a new `W` wrapper.
+    pub fn new(t: &'write mut T) -> Self {
+        Self(t)
+    }
+}
+
+/// Write access to `T`.
 #[cfg(feature = "resman")]
 pub type W<'write, T> = resman::RefMut<'write, T>;
+
+#[cfg(not(feature = "resman"))]
+impl<'write, T> std::ops::Deref for W<'write, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.0
+    }
+}
+
+#[cfg(not(feature = "resman"))]
+impl<'write, T> std::ops::DerefMut for W<'write, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.0
+    }
+}
 
 #[cfg(not(feature = "fn_meta"))]
 impl<'write, T> DataAccess for W<'write, T>
@@ -82,9 +107,27 @@ mod tests {
 
     #[test]
     fn debug() {
-        let w = W::<'_, u32>(&1);
+        let mut n = 1;
+        let w = W::<'_, u32>(&mut n);
 
         assert_eq!("W(1)", format!("{w:?}"));
+    }
+
+    #[test]
+    fn deref() {
+        let mut n = 1u32;
+        let w = W::<'_, u32>::new(&mut n);
+
+        assert_eq!(1, *w);
+    }
+
+    #[test]
+    fn deref_mut() {
+        let mut n = 1u32;
+        let mut w = W::<'_, u32>::new(&mut n);
+        *w += 1;
+
+        assert_eq!("W(2)", format!("{w:?}"));
     }
 }
 

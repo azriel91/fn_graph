@@ -1,6 +1,7 @@
 use daggy::petgraph::graph::IndexType;
 
 /// Type safe function ID for a `FnGraph`.
+#[cfg_attr(feature = "graph_info", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FnIdInner(pub usize);
 

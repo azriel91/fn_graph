@@ -1,5 +1,12 @@
 # Changelog
 
+## unreleased
+
+* ***Breaking:*** Change `FnGraphBuilder::add_edge(s)` to `FnGraphBuilder::add_{logic,contains}_edge(s)`.
+* Add serializable `GraphInfo` struct gated behind `"graph_info"` feature.
+* Add `R::new` and `W::new` when `"resman"` feature is disabled.
+
+
 ## 0.12.0 (2024-01-04)
 
 * Add `StreamOpts::interrupted_next_item_include` to toggle whether interrupted item is streamed.

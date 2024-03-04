@@ -12,7 +12,7 @@ fn main() -> Result<(), WouldCycle<Edge>> {
             cube.into_fn_res(),
             add_five.into_fn_res(),
         ]);
-        fn_graph_builder.add_edges([(add_five, double), (double, cube)])?;
+        fn_graph_builder.add_logic_edges([(add_five, double), (double, cube)])?;
         fn_graph_builder.build()
     };
 
