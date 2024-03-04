@@ -9,6 +9,14 @@ use crate::{DataAccess, DataAccessDyn, TypeIds};
 #[derive(Debug)]
 pub struct R<'read, T>(&'read T);
 
+#[cfg(not(feature = "resman"))]
+impl<'read, T> R<'read, T> {
+    /// Returns a new `R` wrapper.
+    pub fn new(t: &'read T) -> Self {
+        Self(t)
+    }
+}
+
 /// Read access to `T`.
 #[cfg(feature = "resman")]
 pub type R<'read, T> = resman::Ref<'read, T>;
@@ -95,6 +103,14 @@ mod tests {
         let r = R::<'_, u32>(&1);
 
         assert_eq!("R(1)", format!("{r:?}"));
+    }
+
+    #[test]
+    fn deref() {
+        let n = 1u32;
+        let r = R::<'_, u32>::new(&n);
+
+        assert_eq!(1, *r);
     }
 }
 

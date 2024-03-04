@@ -116,7 +116,7 @@ impl<NodeInfo> Eq for GraphInfo<NodeInfo> where NodeInfo: Eq {}
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
-    use daggy::WouldCycle;
+    use daggy::{petgraph::visit::IntoNodeReferences, WouldCycle};
     use resman::{FnRes, IntoFnRes, Resources};
 
     use super::GraphInfo;
@@ -311,6 +311,14 @@ graph_structure_rev:
             }",
             format!("{graph_info:?}")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn deref() -> Result<(), WouldCycle<Edge>> {
+        let graph_info = graph_info()?;
+
+        let _node_references = graph_info.node_references();
         Ok(())
     }
 
