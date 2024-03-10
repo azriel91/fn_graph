@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.13.2 (2024-03-10)
 
 * Add `GraphInfo::new`.
 * Make `GraphInfo` fields public.
