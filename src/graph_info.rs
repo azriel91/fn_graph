@@ -14,10 +14,20 @@ use crate::{Edge, FnGraph, FnIdInner};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GraphInfo<NodeInfo> {
     /// The underlying directed acyclic graph.
-    graph: Dag<NodeInfo, Edge, FnIdInner>,
+    pub graph: Dag<NodeInfo, Edge, FnIdInner>,
 }
 
 impl<NodeInfo> GraphInfo<NodeInfo> {
+    /// Returns a new `GraphInfo`.
+    ///
+    /// # Note
+    ///
+    /// Regularly `GraphInfo::from_graph` is used to instantiate this type; this
+    /// method is provided for completeness as `GraphInfo` is a value type.
+    pub fn new(graph: Dag<NodeInfo, Edge, FnIdInner>) -> Self {
+        Self { graph }
+    }
+
     /// Returns a new `GraphInfo` by mapping each function in the given
     /// `FnGraph` into a `NodeInfo`.
     pub fn from_graph<F>(fn_graph: &FnGraph<F>, fn_info: impl Fn(&F) -> NodeInfo) -> Self {
@@ -37,7 +47,7 @@ impl<NodeInfo> GraphInfo<NodeInfo> {
             so this cannot cause a cycle.",
         );
 
-        Self { graph }
+        Self::new(graph)
     }
 
     /// Returns an iterator of node infos in topological order.
