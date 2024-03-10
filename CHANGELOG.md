@@ -1,6 +1,11 @@
 # Changelog
 
-## unreleased
+## 0.13.1 (2024-03-10)
+
+* `GraphInfo`: Use `Reversed` instead of storing separate `graph_structure_rev`.
+
+
+## 0.13.0 (2024-03-05)
 
 * ***Breaking:*** Change `FnGraphBuilder::add_edge(s)` to `FnGraphBuilder::add_{logic,contains}_edge(s)`.
 * Add serializable `GraphInfo` struct gated behind `"graph_info"` feature.
