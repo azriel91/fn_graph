@@ -1,5 +1,8 @@
 use daggy::{
-    petgraph::{graph::NodeReferences, visit::Topo},
+    petgraph::{
+        graph::NodeReferences,
+        visit::{Reversed, Topo},
+    },
     Dag, Walker,
 };
 use serde::{Deserialize, Serialize};
@@ -12,8 +15,6 @@ use crate::{Edge, FnGraph, FnIdInner};
 pub struct GraphInfo<NodeInfo> {
     /// The underlying directed acyclic graph.
     graph: Dag<NodeInfo, Edge, FnIdInner>,
-    /// Reversed structure of the graph, with `()` as the node weights.
-    graph_structure_rev: Dag<(), Edge, FnIdInner>,
 }
 
 impl<NodeInfo> GraphInfo<NodeInfo> {
@@ -35,12 +36,8 @@ impl<NodeInfo> GraphInfo<NodeInfo> {
             "Edges are all directed from the original graph, \
             so this cannot cause a cycle.",
         );
-        let graph_structure_rev = fn_graph.graph_structure_rev.clone();
 
-        Self {
-            graph,
-            graph_structure_rev,
-        }
+        Self { graph }
     }
 
     /// Returns an iterator of node infos in topological order.
@@ -67,8 +64,9 @@ impl<NodeInfo> GraphInfo<NodeInfo> {
     ///
     /// [`.rev()`]: std::iter::Iterator::rev
     pub fn iter_rev(&self) -> impl Iterator<Item = &NodeInfo> {
-        Topo::new(&self.graph_structure_rev)
-            .iter(&self.graph_structure_rev)
+        let reversed = Reversed(&self.graph);
+        Topo::new(reversed)
+            .iter(reversed)
             .map(|fn_id| &self.graph[fn_id])
     }
 
@@ -220,41 +218,6 @@ mod tests {
   - - 5
     - 1
     - Data
-graph_structure_rev:
-  nodes:
-  - null
-  - null
-  - null
-  - null
-  - null
-  - null
-  node_holes: []
-  edge_property: directed
-  edges:
-  - - 1
-    - 0
-    - Logic
-  - - 2
-    - 0
-    - Logic
-  - - 4
-    - 1
-    - Logic
-  - - 3
-    - 2
-    - Logic
-  - - 4
-    - 3
-    - Logic
-  - - 4
-    - 5
-    - Logic
-  - - 3
-    - 1
-    - Data
-  - - 1
-    - 5
-    - Data
 "#,
             serde_yaml::to_string(&graph_info)?
         );
@@ -281,19 +244,6 @@ graph_structure_rev:
   - [5, 4, Logic]
   - [1, 3, Data]
   - [5, 1, Data]
-graph_structure_rev:
-  nodes: [null, null, null, null, null, null]
-  node_holes: []
-  edge_property: directed
-  edges:
-  - [1, 0, Logic]
-  - [2, 0, Logic]
-  - [4, 1, Logic]
-  - [3, 2, Logic]
-  - [4, 3, Logic]
-  - [4, 5, Logic]
-  - [3, 1, Data]
-  - [1, 5, Data]
 "#
             )?
         );
@@ -306,8 +256,7 @@ graph_structure_rev:
 
         assert_eq!(
             "GraphInfo { \
-                graph: Dag { graph: Graph { Ty: \"Directed\", node_count: 6, edge_count: 8, edges: (0, 1), (0, 2), (1, 4), (2, 3), (3, 4), (5, 4), (1, 3), (5, 1), node weights: {0: \"a\", 1: \"b\", 2: \"c\", 3: \"d\", 4: \"e\", 5: \"f\"}, edge weights: {0: Logic, 1: Logic, 2: Logic, 3: Logic, 4: Logic, 5: Logic, 6: Data, 7: Data} }, cycle_state: DfsSpace { dfs: Dfs { stack: [], discovered: FixedBitSet { data: [], length: 0 } } } }, \
-                graph_structure_rev: Dag { graph: Graph { Ty: \"Directed\", node_count: 6, edge_count: 8, edges: (1, 0), (2, 0), (4, 1), (3, 2), (4, 3), (4, 5), (3, 1), (1, 5), edge weights: {0: Logic, 1: Logic, 2: Logic, 3: Logic, 4: Logic, 5: Logic, 6: Data, 7: Data} }, cycle_state: DfsSpace { dfs: Dfs { stack: [], discovered: FixedBitSet { data: [3], length: 6 } } } } \
+                graph: Dag { graph: Graph { Ty: \"Directed\", node_count: 6, edge_count: 8, edges: (0, 1), (0, 2), (1, 4), (2, 3), (3, 4), (5, 4), (1, 3), (5, 1), node weights: {0: \"a\", 1: \"b\", 2: \"c\", 3: \"d\", 4: \"e\", 5: \"f\"}, edge weights: {0: Logic, 1: Logic, 2: Logic, 3: Logic, 4: Logic, 5: Logic, 6: Data, 7: Data} }, cycle_state: DfsSpace { dfs: Dfs { stack: [], discovered: FixedBitSet { data: [], length: 0 } } } } \
             }",
             format!("{graph_info:?}")
         );
