@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.13.1 (2024-03-10)
 
 * `GraphInfo`: Use `Reversed` instead of storing separate `graph_structure_rev`.
 
