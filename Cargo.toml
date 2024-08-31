@@ -42,3 +42,6 @@ fn_res = ["resman?/fn_res"]
 [[example]]
 name = "simple"
 required-features = ["fn_meta"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
