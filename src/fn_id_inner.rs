@@ -18,7 +18,7 @@ unsafe impl IndexType for FnIdInner {
 
     #[inline(always)]
     fn max() -> Self {
-        FnIdInner(std::usize::MAX)
+        FnIdInner(usize::MAX)
     }
 }
 

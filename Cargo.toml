@@ -1,6 +1,6 @@
 [package]
 name = "fn_graph"
-version = "0.13.2"
+version = "0.13.3"
 authors = ["Azriel Hoh <azriel91@gmail.com>"]
 edition = "2021"
 description = "Dynamically managed function graph execution."
@@ -14,23 +14,28 @@ license = "MIT OR Apache-2.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fixedbitset = "0.4.2"
 daggy = { version = "0.8.0", default-features = false }
-fn_meta = { version = "0.7.3", optional = true, features = ["fn_meta_ext"] }
-interruptible = { version = "0.2.1", optional = true, features = ["stream"] }
+
+# Unable to be bumped until petgraph bumps its version.
+#
+# * https://github.com/petgraph/petgraph/pull/617
+# * https://github.com/petgraph/petgraph/pull/664
+fixedbitset = "0.4.0"
+fn_meta = { version = "0.7.4", optional = true, features = ["fn_meta_ext"] }
+interruptible = { version = "0.2.4", optional = true, features = ["stream"] }
 resman = { version = "0.17", optional = true, features = ["debug"] }
 futures = { version = "0.3.30", optional = true }
-serde = { version = "1.0.197", optional = true, features = ["derive"] }
+serde = { version = "1.0.209", optional = true, features = ["derive"] }
 smallvec = "1.13"
-tokio = { version = "1.36", features = ["sync"] }
+tokio = { version = "1.40", features = ["sync"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2.92"
+wasm-bindgen = "0.2.93"
 
 [dev-dependencies]
 resman = { version = "0.17", features = ["debug", "fn_res", "fn_res_mut", "fn_meta"] }
-tokio = { version = "1.36", features = ["macros", "rt", "sync", "time"] }
-serde_yaml = "0.9.32"
+tokio = { version = "1.40", features = ["macros", "rt", "sync", "time"] }
+serde_yaml = "0.9.34"
 
 [features]
 default = ["async"]
@@ -42,3 +47,6 @@ fn_res = ["resman?/fn_res"]
 [[example]]
 name = "simple"
 required-features = ["fn_meta"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

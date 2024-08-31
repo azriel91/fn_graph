@@ -2172,9 +2172,8 @@ fn poll_and_track_fn_ready_common(
 ) -> impl Stream<Item = FnId> + '_ {
     stream::poll_fn(move |context| {
         fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
-            fn_id_opt.map(|fn_id| {
+            fn_id_opt.inspect(|&fn_id| {
                 fn_ids_processed.push(fn_id);
-                fn_id
             })
         })
     })
@@ -2309,14 +2308,12 @@ impl<F> Default for FnGraph<F> {
 impl<F> Deref for FnGraph<F> {
     type Target = Dag<F, Edge, FnIdInner>;
 
-    #[cfg(not(tarpaulin_include))]
     fn deref(&self) -> &Self::Target {
         &self.graph
     }
 }
 
 impl<F> DerefMut for FnGraph<F> {
-    #[cfg(not(tarpaulin_include))]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
