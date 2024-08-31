@@ -2172,9 +2172,8 @@ fn poll_and_track_fn_ready_common(
 ) -> impl Stream<Item = FnId> + '_ {
     stream::poll_fn(move |context| {
         fn_ready_rx.poll_recv(context).map(|fn_id_opt| {
-            fn_id_opt.map(|fn_id| {
+            fn_id_opt.inspect(|&fn_id| {
                 fn_ids_processed.push(fn_id);
-                fn_id
             })
         })
     })
