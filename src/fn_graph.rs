@@ -2309,14 +2309,12 @@ impl<F> Default for FnGraph<F> {
 impl<F> Deref for FnGraph<F> {
     type Target = Dag<F, Edge, FnIdInner>;
 
-    #[cfg(not(tarpaulin_include))]
     fn deref(&self) -> &Self::Target {
         &self.graph
     }
 }
 
 impl<F> DerefMut for FnGraph<F> {
-    #[cfg(not(tarpaulin_include))]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
