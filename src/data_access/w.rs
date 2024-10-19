@@ -22,7 +22,7 @@ impl<'write, T> W<'write, T> {
 pub type W<'write, T> = resman::RefMut<'write, T>;
 
 #[cfg(not(feature = "resman"))]
-impl<'write, T> std::ops::Deref for W<'write, T> {
+impl<T> std::ops::Deref for W<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -31,14 +31,14 @@ impl<'write, T> std::ops::Deref for W<'write, T> {
 }
 
 #[cfg(not(feature = "resman"))]
-impl<'write, T> std::ops::DerefMut for W<'write, T> {
+impl<T> std::ops::DerefMut for W<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         self.0
     }
 }
 
 #[cfg(not(feature = "fn_meta"))]
-impl<'write, T> DataAccess for W<'write, T>
+impl<T> DataAccess for W<'_, T>
 where
     T: 'static,
 {
@@ -54,7 +54,7 @@ where
 }
 
 #[cfg(not(feature = "fn_meta"))]
-impl<'read, T> DataAccessDyn for W<'read, T>
+impl<T> DataAccessDyn for W<'_, T>
 where
     T: 'static,
 {

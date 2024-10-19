@@ -22,7 +22,7 @@ impl<'read, T> R<'read, T> {
 pub type R<'read, T> = resman::Ref<'read, T>;
 
 #[cfg(not(feature = "resman"))]
-impl<'read, T> std::ops::Deref for R<'read, T> {
+impl<T> std::ops::Deref for R<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -31,7 +31,7 @@ impl<'read, T> std::ops::Deref for R<'read, T> {
 }
 
 #[cfg(not(feature = "fn_meta"))]
-impl<'read, T> DataAccess for R<'read, T>
+impl<T> DataAccess for R<'_, T>
 where
     T: 'static,
 {
@@ -47,7 +47,7 @@ where
 }
 
 #[cfg(not(feature = "fn_meta"))]
-impl<'read, T> DataAccessDyn for R<'read, T>
+impl<T> DataAccessDyn for R<'_, T>
 where
     T: 'static,
 {

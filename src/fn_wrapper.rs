@@ -23,7 +23,7 @@ impl<'iter, 'graph: 'iter, F> FnWrapper<'iter, 'graph, F> {
     }
 }
 
-impl<'iter, 'graph, F> Deref for FnWrapper<'iter, 'graph, F> {
+impl<F> Deref for FnWrapper<'_, '_, F> {
     type Target = F;
 
     fn deref(&self) -> &Self::Target {

@@ -22,6 +22,7 @@ pub struct StreamOpts<'rx, 'intx> {
     pub(crate) marker: PhantomData<&'intx &'rx ()>,
 }
 
+#[allow(clippy::needless_lifetimes)] // false positive: https://github.com/rust-lang/rust-clippy/issues/12908
 impl<'rx, 'intx> StreamOpts<'rx, 'intx> {
     /// Returns a new `FnGraphStreamOpts` with forward iteration and
     /// non-interruptibility.
@@ -57,7 +58,7 @@ impl<'rx, 'intx> StreamOpts<'rx, 'intx> {
     }
 }
 
-impl<'rx, 'intx> Default for StreamOpts<'rx, 'intx> {
+impl Default for StreamOpts<'_, '_> {
     fn default() -> Self {
         Self {
             stream_order: StreamOrder::Forward,

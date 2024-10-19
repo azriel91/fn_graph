@@ -26,7 +26,7 @@ impl<'iter, 'graph: 'iter, F> FnWrapperMut<'iter, 'graph, F> {
     }
 }
 
-impl<'iter, 'graph, F> Deref for FnWrapperMut<'iter, 'graph, F> {
+impl<F> Deref for FnWrapperMut<'_, '_, F> {
     type Target = F;
 
     fn deref(&self) -> &Self::Target {
@@ -34,7 +34,7 @@ impl<'iter, 'graph, F> Deref for FnWrapperMut<'iter, 'graph, F> {
     }
 }
 
-impl<'iter, 'graph, F> DerefMut for FnWrapperMut<'iter, 'graph, F> {
+impl<F> DerefMut for FnWrapperMut<'_, '_, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.f
     }
