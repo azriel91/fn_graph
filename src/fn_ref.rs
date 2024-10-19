@@ -51,9 +51,7 @@ mod tests {
             fn_done_tx,
         };
 
-        assert!(
-            format!("{fn_ref:?}")
-                .starts_with("FnRef { fn_id: NodeIndex(FnIdInner(1)), fn: (), fn_done_tx: Sender")
-        );
+        assert!(format!("{fn_ref:?}")
+            .starts_with("FnRef { fn_id: NodeIndex(FnIdInner(1)), fn: (), fn_done_tx: Sender"));
     }
 }

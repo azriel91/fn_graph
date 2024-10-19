@@ -113,8 +113,8 @@ mod tests {
     }
 
     #[test]
-    fn does_not_add_data_edge_when_ww_conflict_but_logic_edge_exists()
-    -> Result<(), WouldCycle<Edge>> {
+    fn does_not_add_data_edge_when_ww_conflict_but_logic_edge_exists(
+    ) -> Result<(), WouldCycle<Edge>> {
         // a - b
         let mut graph = Dag::<_, Edge, FnIdInner>::new();
         let fn_id_a = graph.add_node((|_: &mut u8| {}).into_fn_res());
