@@ -69,7 +69,7 @@ impl DataAccessDyn for () {
 }
 
 #[cfg(not(feature = "fn_meta"))]
-impl<'any> DataAccess for &'any () {
+impl DataAccess for &() {
     fn borrows() -> TypeIds
     where
         Self: Sized,
@@ -86,7 +86,7 @@ impl<'any> DataAccess for &'any () {
 }
 
 #[cfg(not(feature = "fn_meta"))]
-impl<'any> DataAccessDyn for &'any () {
+impl DataAccessDyn for &() {
     fn borrows(&self) -> TypeIds
     where
         Self: Sized,

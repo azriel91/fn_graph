@@ -2439,8 +2439,8 @@ mod tests {
     }
 
     #[test]
-    fn partial_eq_returns_false_for_same_value_different_edge_direction_graphs()
-    -> Result<(), WouldCycle<Edge>> {
+    fn partial_eq_returns_false_for_same_value_different_edge_direction_graphs(
+    ) -> Result<(), WouldCycle<Edge>> {
         let mut fn_graph_a = FnGraph::<u32>::new();
         let a_0 = fn_graph_a.add_node(0);
         let a_1 = fn_graph_a.add_node(1);
@@ -2456,8 +2456,8 @@ mod tests {
     }
 
     #[test]
-    fn partial_eq_returns_false_for_same_value_different_edge_type_graphs()
-    -> Result<(), WouldCycle<Edge>> {
+    fn partial_eq_returns_false_for_same_value_different_edge_type_graphs(
+    ) -> Result<(), WouldCycle<Edge>> {
         let mut fn_graph_a = FnGraph::<u32>::new();
         let a_0 = fn_graph_a.add_node(0);
         let a_1 = fn_graph_a.add_node(1);
@@ -2704,8 +2704,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stream_returns_fns_in_dep_order_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn stream_returns_fns_in_dep_order_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -2744,8 +2744,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn stream_with_rev_returns_fns_in_dep_rev_order_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn stream_with_rev_returns_fns_in_dep_rev_order_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -2774,8 +2774,8 @@ mod tests {
 
         #[cfg(feature = "interruptible")]
         #[tokio::test]
-        async fn stream_with_interruptible_rev_returns_fns_in_dep_rev_order_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn stream_with_interruptible_rev_returns_fns_in_dep_rev_order_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -2866,8 +2866,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fold_async_with_runs_fns_in_dep_rev_order()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn fold_async_with_runs_fns_in_dep_rev_order(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -2951,8 +2951,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fold_async_mut_with_runs_fns_in_dep_rev_order()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn fold_async_mut_with_runs_fns_in_dep_rev_order(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -2997,8 +2997,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3041,8 +3041,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_with_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_with_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3072,8 +3072,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn for_each_concurrent_with_interrupt_returns_fn_ids_not_processed()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_with_interrupt_returns_fn_ids_not_processed(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, Interruptibility};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3144,8 +3144,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn for_each_concurrent_with_interrupt_finish_current_also_interrupts_preloaded_fns()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_with_interrupt_finish_current_also_interrupts_preloaded_fns(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3211,8 +3211,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn for_each_concurrent_with_interrupt_finish_current_with_sleep()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_with_interrupt_finish_current_with_sleep(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3285,8 +3285,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn for_each_concurrent_with_interrupt_finish_current_with_sleep_include_interrupted_false()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_with_interrupt_finish_current_with_sleep_include_interrupted_false(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3361,8 +3361,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn for_each_concurrent_with_interrupt_poll_next_n_also_interrupts_preloaded_fns()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_with_interrupt_poll_next_n_also_interrupts_preloaded_fns(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3513,8 +3513,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_fold_async_with_runs_fns_in_dep_rev_order()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_fold_async_with_runs_fns_in_dep_rev_order(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3603,8 +3603,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_fold_async_mut_with_runs_fns_in_dep_rev_order()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_fold_async_mut_with_runs_fns_in_dep_rev_order(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -3636,8 +3636,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3670,8 +3670,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3703,8 +3703,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3738,8 +3738,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3806,8 +3806,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_with_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -3855,8 +3855,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn try_for_each_concurrent_with_interrupt_returns_fn_ids_not_processed()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_interrupt_returns_fn_ids_not_processed(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, Interruptibility};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3929,8 +3929,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn try_for_each_concurrent_with_interrupt_finish_current_also_interrupts_preloaded_fns()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_interrupt_finish_current_also_interrupts_preloaded_fns(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -3998,8 +3998,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn try_for_each_concurrent_with_interrupt_finish_current_with_sleep()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_interrupt_finish_current_with_sleep(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -4074,8 +4074,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn try_for_each_concurrent_with_interrupt_finish_current_with_sleep_include_interrupted_false()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_interrupt_finish_current_with_sleep_include_interrupted_false(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -4152,8 +4152,8 @@ mod tests {
 
         #[tokio::test]
         #[cfg(feature = "interruptible")]
-        async fn try_for_each_concurrent_with_interrupt_poll_next_n_also_interrupts_preloaded_fns()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_interrupt_poll_next_n_also_interrupts_preloaded_fns(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             use interruptible::{InterruptSignal, InterruptibilityState};
 
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
@@ -4220,8 +4220,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4252,8 +4252,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4287,8 +4287,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_with_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_with_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4326,8 +4326,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_mut_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_mut_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4355,8 +4355,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn for_each_concurrent_mut_with_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn for_each_concurrent_mut_with_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4384,8 +4384,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_runs_fns_concurrently_mut()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_runs_fns_concurrently_mut(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4417,8 +4417,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4450,8 +4450,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4485,8 +4485,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4526,8 +4526,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_with_runs_fns_concurrently_mut()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_with_runs_fns_concurrently_mut(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4559,8 +4559,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4591,8 +4591,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4626,8 +4626,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_mut_with_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4678,8 +4678,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4711,8 +4711,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4743,8 +4743,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4777,8 +4777,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4826,8 +4826,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_with_runs_fns_concurrently()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_with_runs_fns_concurrently(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4859,8 +4859,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4890,8 +4890,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4924,8 +4924,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_with_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_with_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (fn_graph, mut seq_rx) = complex_graph_unit()?;
 
             let mut resources = Resources::new();
@@ -4959,8 +4959,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_runs_fns_concurrently_mut()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_runs_fns_concurrently_mut(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -4991,8 +4991,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -5023,8 +5023,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -5057,8 +5057,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -5092,8 +5092,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_with_runs_fns_concurrently_mut()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_with_runs_fns_concurrently_mut(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -5128,8 +5128,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -5163,8 +5163,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure_variation()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_one_function_returns_failure_variation(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -5201,8 +5201,8 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_multiple_functions_return_failure()
-        -> Result<(), Box<dyn std::error::Error>> {
+        async fn try_for_each_concurrent_control_mut_with_gracefully_ends_when_multiple_functions_return_failure(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let (mut fn_graph, mut seq_rx) = complex_graph_unit_mut()?;
 
             let mut resources = Resources::new();
@@ -5268,8 +5268,8 @@ mod tests {
         }
 
         type BoxFnRes = Box<dyn FnRes<Ret = BoxFuture<'static, &'static str>>>;
-        fn complex_graph_unit()
-        -> Result<(FnGraph<BoxFnRes>, Receiver<&'static str>), WouldCycle<Edge>> {
+        fn complex_graph_unit(
+        ) -> Result<(FnGraph<BoxFnRes>, Receiver<&'static str>), WouldCycle<Edge>> {
             // a - b --------- e
             //   \          / /
             //    '-- c - d  /
@@ -5374,8 +5374,8 @@ mod tests {
 
         type BoxFnResMut = Box<dyn FnResMut<Ret = BoxFuture<'static, &'static str>>>;
 
-        fn complex_graph_unit_mut()
-        -> Result<(FnGraph<BoxFnResMut>, Receiver<&'static str>), WouldCycle<Edge>> {
+        fn complex_graph_unit_mut(
+        ) -> Result<(FnGraph<BoxFnResMut>, Receiver<&'static str>), WouldCycle<Edge>> {
             // a - b --------- e
             //   \          / /
             //    '-- c - d  /

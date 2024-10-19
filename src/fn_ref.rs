@@ -16,7 +16,7 @@ pub struct FnRef<'f, F> {
     pub(crate) fn_done_tx: Sender<FnId>,
 }
 
-impl<'f, F> Deref for FnRef<'f, F> {
+impl<F> Deref for FnRef<'_, F> {
     type Target = F;
 
     fn deref(&self) -> &Self::Target {
@@ -24,7 +24,7 @@ impl<'f, F> Deref for FnRef<'f, F> {
     }
 }
 
-impl<'f, F> Drop for FnRef<'f, F> {
+impl<F> Drop for FnRef<'_, F> {
     fn drop(&mut self) {
         // Notify that this function is no longer used.
         // We ignore the result because the receiver may be closed before the reference
@@ -51,9 +51,7 @@ mod tests {
             fn_done_tx,
         };
 
-        assert!(
-            format!("{fn_ref:?}")
-                .starts_with("FnRef { fn_id: NodeIndex(FnIdInner(1)), fn: (), fn_done_tx: Sender")
-        );
+        assert!(format!("{fn_ref:?}")
+            .starts_with("FnRef { fn_id: NodeIndex(FnIdInner(1)), fn: (), fn_done_tx: Sender"));
     }
 }
