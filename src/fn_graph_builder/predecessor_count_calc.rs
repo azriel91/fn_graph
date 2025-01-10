@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use daggy::{Dag, Walker};
+use daggy2::{Dag, Walker};
 
 use crate::{Edge, EdgeCounts, FnIdInner};
 
@@ -38,7 +38,7 @@ impl<F> PredecessorCountCalc<F> {
 
 #[cfg(test)]
 mod tests {
-    use daggy::{Dag, WouldCycle};
+    use daggy2::{Dag, WouldCycle};
     use resman::IntoFnRes;
 
     use super::PredecessorCountCalc;

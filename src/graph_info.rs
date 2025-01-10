@@ -1,4 +1,4 @@
-use daggy::{
+use daggy2::{
     petgraph::{
         graph::NodeReferences,
         visit::{Reversed, Topo},
@@ -84,7 +84,7 @@ impl<NodeInfo> GraphInfo<NodeInfo> {
     ///
     /// Each iteration returns a `(FnId, &'a F)`.
     pub fn iter_insertion_with_indices(&self) -> NodeReferences<NodeInfo, FnIdInner> {
-        use daggy::petgraph::visit::IntoNodeReferences;
+        use daggy2::petgraph::visit::IntoNodeReferences;
         self.graph.node_references()
     }
 }
@@ -124,7 +124,7 @@ impl<NodeInfo> Eq for GraphInfo<NodeInfo> where NodeInfo: Eq {}
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
-    use daggy::{petgraph::visit::IntoNodeReferences, WouldCycle};
+    use daggy2::{petgraph::visit::IntoNodeReferences, WouldCycle};
     use resman::{FnRes, IntoFnRes, Resources};
 
     use super::GraphInfo;
