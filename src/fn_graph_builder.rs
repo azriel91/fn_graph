@@ -1,4 +1,4 @@
-use daggy::{Dag, WouldCycle};
+use daggy2::{Dag, WouldCycle};
 
 use crate::{DataAccessDyn, Edge, EdgeId, FnGraph, FnId, FnIdInner};
 
@@ -62,7 +62,7 @@ where
     /// multiple times with the same functions, only the last call's edge
     /// will be retained.
     ///
-    /// [`add_edge`]: daggy::petgraph::data::Build::add_edge
+    /// [`add_edge`]: daggy2::petgraph::data::Build::add_edge
     pub fn add_logic_edge(
         &mut self,
         function_from: FnId,
@@ -81,7 +81,7 @@ where
     /// multiple times with the same functions, only the last call's edge
     /// will be retained.
     ///
-    /// [`add_edge`]: daggy::petgraph::data::Build::add_edge
+    /// [`add_edge`]: daggy2::petgraph::data::Build::add_edge
     pub fn add_contains_edge(
         &mut self,
         function_from: FnId,
@@ -176,7 +176,7 @@ impl<F> Default for FnGraphBuilder<F> {
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
-    use daggy::WouldCycle;
+    use daggy2::WouldCycle;
     use resman::IntoFnRes;
 
     use super::FnGraphBuilder;

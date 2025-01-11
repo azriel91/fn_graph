@@ -1,4 +1,4 @@
-use daggy::{petgraph::visit::IntoNodeReferences, Dag};
+use daggy2::{petgraph::visit::IntoNodeReferences, Dag};
 
 use crate::{Edge, FnId, FnIdInner};
 
