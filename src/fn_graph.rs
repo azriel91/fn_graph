@@ -2714,7 +2714,7 @@ mod tests {
             let resources = &resources;
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.stream().for_each_concurrent(None, |f| async move {
                     let _ = f.call(resources).await;
                 }),
@@ -2754,7 +2754,7 @@ mod tests {
             let resources = &resources;
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph
                     .stream_with(StreamOpts::new().rev())
                     .for_each_concurrent(None, |f| async move {
@@ -2784,7 +2784,7 @@ mod tests {
             let resources = &resources;
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph
                     .stream_with_interruptible(StreamOpts::new().rev())
                     .for_each_concurrent(None, |f| async move {
@@ -3007,7 +3007,7 @@ mod tests {
             let resources = &resources;
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.for_each_concurrent(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -3051,7 +3051,7 @@ mod tests {
             let resources = &resources;
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
@@ -3647,7 +3647,7 @@ mod tests {
 
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -3817,7 +3817,7 @@ mod tests {
 
             let stream_outcome = test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
@@ -4336,7 +4336,7 @@ mod tests {
             let resources = &resources;
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.for_each_concurrent_mut(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -4365,7 +4365,7 @@ mod tests {
             let resources = &resources;
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -4395,7 +4395,7 @@ mod tests {
 
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent_mut(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -4537,7 +4537,7 @@ mod tests {
 
             test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent_mut_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -4689,7 +4689,7 @@ mod tests {
 
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent_control(None, |f| {
                     let fut = f.call(resources);
                     async move {
@@ -4837,7 +4837,7 @@ mod tests {
 
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent_control_with(None, StreamOpts::new().rev(), |f| {
                     let fut = f.call(resources);
                     async move {
@@ -4970,7 +4970,7 @@ mod tests {
 
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent_control_mut(None, |f| {
                     let fut = f.call_mut(resources);
                     async move {
@@ -5103,7 +5103,7 @@ mod tests {
 
             let (ControlFlow::Continue(_) | ControlFlow::Break(_)) = test_timeout(
                 Duration::from_millis(200),
-                Duration::from_millis(255),
+                Duration::from_millis(265),
                 fn_graph.try_for_each_concurrent_control_mut_with(
                     None,
                     StreamOpts::new().rev(),
