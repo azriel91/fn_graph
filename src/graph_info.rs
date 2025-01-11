@@ -266,7 +266,7 @@ mod tests {
 
         assert_eq!(
             "GraphInfo { \
-                graph: Dag { graph: Graph { Ty: \"Directed\", node_count: 6, edge_count: 8, edges: (0, 1), (0, 2), (1, 4), (2, 3), (3, 4), (5, 4), (1, 3), (5, 1), node weights: {0: \"a\", 1: \"b\", 2: \"c\", 3: \"d\", 4: \"e\", 5: \"f\"}, edge weights: {0: Logic, 1: Logic, 2: Logic, 3: Logic, 4: Logic, 5: Logic, 6: Data, 7: Data} }, cycle_state: DfsSpace { dfs: Dfs { stack: [], discovered: FixedBitSet { data: [], length: 0 } } } } \
+                graph: Dag { graph: Graph { Ty: \"Directed\", node_count: 6, edge_count: 8, edges: (0, 1), (0, 2), (1, 4), (2, 3), (3, 4), (5, 4), (1, 3), (5, 1), node weights: {0: \"a\", 1: \"b\", 2: \"c\", 3: \"d\", 4: \"e\", 5: \"f\"}, edge weights: {0: Logic, 1: Logic, 2: Logic, 3: Logic, 4: Logic, 5: Logic, 6: Data, 7: Data} }, cycle_state: DfsSpace { dfs: Dfs { stack: [], discovered: FixedBitSet { data: 0x10, capacity: 0, length: 0 } } } } \
             }",
             format!("{graph_info:?}")
         );
