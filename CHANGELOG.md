@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.0 (2025-01-12)
+
+* Update `resman` from `0.17.0` to `0.18.0`.
+
+
 ## 0.14.0 (2025-01-11)
 
 * Update dependency versions.
