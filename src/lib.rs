@@ -1,6 +1,7 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-//! Dynamically managed function graph execution.
+//! Runs interdependent logic concurrently, starting each function when
+//! predecessors have completed.
 //!
 //! This crate provides a `FnGraph`, where consumers can register a list of
 //! functions and their interdependencies. The graph can then return a stream of

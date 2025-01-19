@@ -5,7 +5,7 @@
 [![CI](https://github.com/azriel91/fn_graph/workflows/CI/badge.svg)](https://github.com/azriel91/fn_graph/actions/workflows/ci.yml)
 [![Coverage Status](https://codecov.io/gh/azriel91/fn_graph/branch/main/graph/badge.svg)](https://codecov.io/gh/azriel91/fn_graph)
 
-Dynamically managed function graph execution.
+Runs interdependent logic concurrently, starting each function when predecessors have completed.
 
 This crate provides a `FnGraph`, where consumers can register a list of
 functions and their interdependencies. The graph can then return a stream of
