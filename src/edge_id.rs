@@ -1,4 +1,4 @@
-use daggy2::EdgeIndex;
+use daggy::EdgeIndex;
 
 use crate::FnIdInner;
 

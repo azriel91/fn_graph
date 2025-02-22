@@ -1,4 +1,4 @@
-use daggy2::petgraph::graph::IndexType;
+use daggy::petgraph::graph::IndexType;
 
 /// Type safe function ID for a `FnGraph`.
 #[cfg_attr(feature = "graph_info", derive(serde::Deserialize, serde::Serialize))]

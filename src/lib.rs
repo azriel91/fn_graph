@@ -18,13 +18,13 @@
 //! Add the following to `Cargo.toml`
 //!
 //! ```toml
-//! fn_graph = "0.15.0"
+//! fn_graph = "0.16.0"
 //!
 //! # Integrate with `fn_meta` / `interruptible` / `resman`
-//! fn_graph = { version = "0.15.0", features = ["fn_meta"] }
-//! fn_graph = { version = "0.15.0", features = ["interruptible"] }
-//! fn_graph = { version = "0.15.0", features = ["resman"] }
-//! fn_graph = { version = "0.15.0", features = ["fn_meta", "interruptible", "resman"] }
+//! fn_graph = { version = "0.16.0", features = ["fn_meta"] }
+//! fn_graph = { version = "0.16.0", features = ["interruptible"] }
+//! fn_graph = { version = "0.16.0", features = ["resman"] }
+//! fn_graph = { version = "0.16.0", features = ["fn_meta", "interruptible", "resman"] }
 //! ```
 //!
 //! # Rationale
@@ -67,11 +67,11 @@
 //!   `fn_graph` keeps a dependency graph of logic and data dependencies, and
 //!   executes functions when the preceding functions are complete.
 //!
-//!     This allows for slightly less waiting time for subsequent functions with
-//!     data dependencies, as each may begin once its predecessors finish,
-//!     whereas a staged approach may contain other functions that are still
-//!     executing that prevent functions in the next stage from beginning
-//!     execution.
+//!   This allows for slightly less waiting time for subsequent functions with
+//!   data dependencies, as each may begin once its predecessors finish,
+//!   whereas a staged approach may contain other functions that are still
+//!   executing that prevent functions in the next stage from beginning
+//!   execution.
 //!
 //! ## See Also
 //!
@@ -88,7 +88,7 @@
 //! [`FnMeta`]: https://docs.rs/fn_meta/latest/fn_meta/trait.FnMeta.html
 //! [`FnRes`]: https://docs.rs/resman/latest/resman/trait.FnRes.html
 
-pub use daggy2::{self, WouldCycle};
+pub use daggy::{self, WouldCycle};
 
 #[cfg(feature = "resman")]
 pub use resman::{self, Resources};

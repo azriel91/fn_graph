@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.0 (2025-02-22)
+
+* Switch from `daggy2` to `daggy`.
+
+
 ## 0.15.0 (2025-01-12)
 
 * Update `resman` from `0.17.0` to `0.18.0`.
@@ -8,6 +13,7 @@
 ## 0.14.0 (2025-01-11)
 
 * Update dependency versions.
+* Switch from `daggy` to `daggy2`.
 
 
 ## 0.13.3 (2024-08-31)

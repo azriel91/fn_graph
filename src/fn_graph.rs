@@ -3,7 +3,7 @@ use std::{
     ops::{ControlFlow, Deref, DerefMut},
 };
 
-use daggy2::{
+use daggy::{
     petgraph::{graph::NodeReferences, visit::Topo},
     Dag, NodeWeightsMut, Walker,
 };
@@ -12,7 +12,7 @@ use fixedbitset::FixedBitSet;
 use crate::{Edge, FnId, FnIdInner, Rank};
 
 #[cfg(feature = "async")]
-use daggy2::NodeIndex;
+use daggy::NodeIndex;
 #[cfg(feature = "async")]
 use futures::future::LocalBoxFuture;
 #[cfg(feature = "async")]
@@ -1896,7 +1896,7 @@ impl<F> FnGraph<F> {
     ///
     /// To iterate in logical dependency order, see [`FnGraph::iter`].
     pub fn iter_insertion(&self) -> impl ExactSizeIterator<Item = &F> + DoubleEndedIterator {
-        use daggy2::petgraph::visit::IntoNodeReferences;
+        use daggy::petgraph::visit::IntoNodeReferences;
         self.graph.node_references().map(|(_, function)| function)
     }
 
@@ -1911,7 +1911,7 @@ impl<F> FnGraph<F> {
     ///
     /// Each iteration returns a `(FnId, &'a F)`.
     pub fn iter_insertion_with_indices(&self) -> NodeReferences<F, FnIdInner> {
-        use daggy2::petgraph::visit::IntoNodeReferences;
+        use daggy::petgraph::visit::IntoNodeReferences;
         self.graph.node_references()
     }
 }
@@ -2370,7 +2370,7 @@ impl<F> Eq for FnGraph<F> where F: Eq {}
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
-    use daggy2::WouldCycle;
+    use daggy::WouldCycle;
     use resman::{FnRes, IntoFnRes, Resources};
 
     use super::FnGraph;
@@ -2672,7 +2672,7 @@ mod tests {
     mod async_tests {
         use std::{fmt, ops::ControlFlow};
 
-        use daggy2::{NodeIndex, WouldCycle};
+        use daggy::{NodeIndex, WouldCycle};
         use futures::{future::BoxFuture, stream, Future, FutureExt, StreamExt};
         use resman::{FnRes, FnResMut, IntoFnRes, IntoFnResMut, Resources};
         use tokio::{
