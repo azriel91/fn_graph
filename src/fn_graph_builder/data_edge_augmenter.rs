@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use daggy2::{petgraph::algo::has_path_connecting, Dag};
+use daggy::{petgraph::algo::has_path_connecting, Dag};
 
 use crate::{DataAccessDyn, Edge, FnId, FnIdInner, Rank};
 
@@ -92,7 +92,7 @@ where
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
-    use daggy2::{petgraph::algo::all_simple_paths, Dag, WouldCycle};
+    use daggy::{petgraph::algo::all_simple_paths, Dag, WouldCycle};
     use resman::{FnRes, IntoFnRes};
 
     use super::{super::RankCalc, DataEdgeAugmenter};

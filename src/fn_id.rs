@@ -1,4 +1,4 @@
-use daggy2::NodeIndex;
+use daggy::NodeIndex;
 
 use crate::FnIdInner;
 

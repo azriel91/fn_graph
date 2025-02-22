@@ -88,7 +88,7 @@
 //! [`FnMeta`]: https://docs.rs/fn_meta/latest/fn_meta/trait.FnMeta.html
 //! [`FnRes`]: https://docs.rs/resman/latest/resman/trait.FnRes.html
 
-pub use daggy2::{self, WouldCycle};
+pub use daggy::{self, WouldCycle};
 
 #[cfg(feature = "resman")]
 pub use resman::{self, Resources};

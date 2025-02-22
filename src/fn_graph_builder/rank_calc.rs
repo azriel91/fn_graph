@@ -1,6 +1,6 @@
 use std::{cmp, collections::VecDeque, marker::PhantomData};
 
-use daggy2::{petgraph::visit::IntoNodeReferences, Dag, Walker};
+use daggy::{petgraph::visit::IntoNodeReferences, Dag, Walker};
 
 use crate::{Edge, FnId, FnIdInner, Rank};
 
@@ -58,7 +58,7 @@ impl<F> RankCalc<F> {
 
 #[cfg(test)]
 mod tests {
-    use daggy2::{Dag, WouldCycle};
+    use daggy::{Dag, WouldCycle};
     use resman::IntoFnRes;
 
     use super::RankCalc;

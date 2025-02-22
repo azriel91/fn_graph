@@ -14,7 +14,7 @@ license = "MIT OR Apache-2.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-daggy2 = { version = "0.8.1", default-features = false }
+daggy = { version = "0.8.1", default-features = false }
 fixedbitset = "0.5.7"
 fn_meta = { version = "0.7.4", optional = true, features = ["fn_meta_ext"] }
 interruptible = { version = "0.2.4", optional = true, features = ["stream"] }
@@ -35,7 +35,7 @@ serde_yaml = "0.9.34"
 [features]
 default = ["async"]
 async = ["futures"]
-graph_info = ["dep:serde", "daggy2/serde-1"]
+graph_info = ["dep:serde", "daggy/serde-1"]
 interruptible = ["dep:interruptible"]
 fn_res = ["resman?/fn_res"]
 
