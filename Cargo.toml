@@ -20,12 +20,12 @@ fn_meta = { version = "0.7.4", optional = true, features = ["fn_meta_ext"] }
 interruptible = { version = "0.2.4", optional = true, features = ["stream"] }
 resman = { version = "0.18", optional = true, features = ["debug"] }
 futures = { version = "0.3.31", optional = true }
-serde = { version = "1.0.217", optional = true, features = ["derive"] }
-smallvec = "1.13"
+serde = { version = "1.0.218", optional = true, features = ["derive"] }
+smallvec = "1.14"
 tokio = { version = "1.43", features = ["sync"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2.99"
+wasm-bindgen = "0.2.100"
 
 [dev-dependencies]
 resman = { version = "0.18", features = ["debug", "fn_res", "fn_res_mut", "fn_meta"] }
