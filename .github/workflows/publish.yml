@@ -59,18 +59,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo-release Cache
-        id: cargo_release_cache
-        uses: actions/cache@v4
+      - name: cargo-release cache restore
+        id: cargo_release_cache_restore
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cargo/bin/cargo-release
           key: ${{ runner.os }}-cargo-release
 
       - run: cargo install cargo-release
-        if: steps.cargo_release_cache.outputs.cache-hit != 'true'
+        if: steps.cargo_release_cache_restore.outputs.cache-hit != 'true'
+
+      - name: cargo-release cache save
+        id: cargo_release_cache_save
+        uses: actions/cache/save@v4
+        if: always() && steps.cargo_release_cache_restore.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cargo/bin/cargo-release
+          key: ${{ runner.os }}-cargo-release
 
       - name: cargo login
-        run: cargo login ${{ secrets.CRATES_IO_API_TOKEN }}
+        run: |-
+          echo "${{ secrets.CRATES_IO_API_TOKEN }}" | cargo login
 
       - name: "cargo release publish"
         run: |-

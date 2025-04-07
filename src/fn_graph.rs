@@ -182,11 +182,11 @@ impl<F> FnGraph<F> {
     #[cfg(feature = "async")]
     fn stream_internal(&self, stream_order: StreamOrder) -> impl Stream<Item = FnRef<'_, F>> + '_ {
         let FnGraph {
-            ref graph,
-            ref graph_structure,
-            ref graph_structure_rev,
+            graph,
+            graph_structure,
+            graph_structure_rev,
             ranks: _,
-            ref edge_counts,
+            edge_counts,
         } = self;
 
         let StreamSetupInit {
@@ -308,11 +308,11 @@ impl<F> FnGraph<F> {
         F: 'f,
     {
         let FnGraph {
-            ref graph,
-            ref graph_structure,
-            ref graph_structure_rev,
+            graph,
+            graph_structure,
+            graph_structure_rev,
             ranks: _,
-            ref edge_counts,
+            edge_counts,
         } = self;
 
         let StreamOpts {
@@ -480,7 +480,7 @@ impl<F> FnGraph<F> {
         for<'iter> FnFold: FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Seed>,
         F: 'f,
     {
-        let FnGraph {
+        let &mut FnGraph {
             ref mut graph,
             ref graph_structure,
             ref graph_structure_rev,
@@ -673,11 +673,11 @@ impl<F> FnGraph<F> {
         F: 'f,
     {
         let FnGraph {
-            ref graph,
-            ref graph_structure,
-            ref graph_structure_rev,
+            graph,
+            graph_structure,
+            graph_structure_rev,
             ranks: _,
-            ref edge_counts,
+            edge_counts,
         } = self;
 
         let StreamSetupInitConcurrent {
@@ -809,7 +809,7 @@ impl<F> FnGraph<F> {
         FnForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = ()>,
     {
-        let FnGraph {
+        let &mut FnGraph {
             ref mut graph,
             ref graph_structure,
             ref graph_structure_rev,
@@ -951,11 +951,11 @@ impl<F> FnGraph<F> {
         F: 'f,
     {
         let FnGraph {
-            ref graph,
-            ref graph_structure,
-            ref graph_structure_rev,
+            graph,
+            graph_structure,
+            graph_structure_rev,
             ranks: _,
-            ref edge_counts,
+            edge_counts,
         } = self;
 
         let StreamOpts {
@@ -1145,7 +1145,7 @@ impl<F> FnGraph<F> {
             FnMut(Seed, FnWrapperMut<'iter, 'f, F>) -> LocalBoxFuture<'iter, Result<Seed, E>>,
         F: 'f,
     {
-        let FnGraph {
+        let &mut FnGraph {
             ref mut graph,
             ref graph_structure,
             ref graph_structure_rev,
@@ -1448,10 +1448,10 @@ impl<F> FnGraph<F> {
     {
         let FnGraph {
             graph: _,
-            ref graph_structure,
-            ref graph_structure_rev,
+            graph_structure,
+            graph_structure_rev,
             ranks: _,
-            ref edge_counts,
+            edge_counts,
         } = self;
 
         let StreamSetupInitConcurrent {
@@ -1714,7 +1714,7 @@ impl<F> FnGraph<F> {
         FnTryForEach: Fn(&mut F) -> Fut,
         Fut: Future<Output = Result<(), E>>,
     {
-        let FnGraph {
+        let &mut FnGraph {
             graph: _,
             ref graph_structure,
             ref graph_structure_rev,
@@ -2059,7 +2059,7 @@ fn stream_setup_init_concurrent<'f>(
     graph_structure_rev: &'f Dag<(), Edge, FnIdInner>,
     edge_counts: &EdgeCounts,
     opts: &StreamOpts<'f, 'f>,
-) -> StreamSetupInitConcurrent<'f, impl Future<Output = ()> + 'f> {
+) -> StreamSetupInitConcurrent<'f, impl Future<Output = ()> + 'f + use<'f>> {
     let StreamOpts {
         stream_order,
         #[cfg(feature = "interruptible")]
