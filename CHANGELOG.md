@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## 0.17.0 (2025-04-07)
 
 * Update crate rust edition to 2024.
 * Update `resman` from `0.18.0` to `0.19.0`.
