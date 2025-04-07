@@ -229,7 +229,7 @@ mod tests {
     - 1
     - Data
 "#,
-            serde_yaml::to_string(&graph_info)?
+            serde_yaml_ng::to_string(&graph_info)?
         );
         Ok(())
     }
@@ -240,7 +240,7 @@ mod tests {
 
         assert_eq!(
             graph_info,
-            serde_yaml::from_str(
+            serde_yaml_ng::from_str(
                 r#"graph:
   nodes: [a, b, c, d, e, f]
   node_holes: []
