@@ -78,7 +78,8 @@ jobs:
           key: ${{ runner.os }}-cargo-release
 
       - name: cargo login
-        run: cargo login ${{ secrets.CRATES_IO_API_TOKEN }}
+        run: |-
+          echo "${{ secrets.CRATES_IO_API_TOKEN }}" | cargo login
 
       - name: "cargo release publish"
         run: |-
