@@ -1,5 +1,11 @@
 # Changelog
 
+## unreleased
+
+* Update crate rust edition to 2024.
+* Update `resman` from `0.18.0` to `0.19.0`.
+
+
 ## 0.16.0 (2025-02-22)
 
 * Switch from `daggy2` to `daggy`.
