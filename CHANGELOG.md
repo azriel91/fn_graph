@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.0 (2025-04-18)
+
+* Update `daggy` from `0.8.1` to `0.9.0`.
+
+
 ## 0.17.0 (2025-04-07)
 
 * Update crate rust edition to 2024.
