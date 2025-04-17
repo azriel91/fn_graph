@@ -92,6 +92,8 @@ where
 #[cfg(feature = "fn_meta")]
 #[cfg(test)]
 mod tests {
+    use std::hash::RandomState;
+
     use daggy::{petgraph::algo::all_simple_paths, Dag, WouldCycle};
     use resman::{FnRes, IntoFnRes};
 
@@ -244,7 +246,8 @@ mod tests {
         fn_id_to: FnId,
         edge: Edge,
     ) {
-        let mut paths_iter = all_simple_paths::<Vec<_>, _>(&graph, fn_id_from, fn_id_to, 0, None);
+        let mut paths_iter =
+            all_simple_paths::<Vec<_>, _, RandomState>(&graph, fn_id_from, fn_id_to, 0, None);
         assert_eq!(Some(vec![fn_id_from, fn_id_to]), paths_iter.next());
         assert_eq!(None, paths_iter.next());
         assert_eq!(
